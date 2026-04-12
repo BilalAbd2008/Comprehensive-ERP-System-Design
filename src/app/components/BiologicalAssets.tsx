@@ -1,22 +1,34 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useData } from '../context/DataContext';
 import { Edit2, Check, X, QrCode, Scan, Plus, Trash2 } from 'lucide-react';
 import QRCodeDisplay from './QRCodeDisplay';
 
 export default function BiologicalAssets() {
-  const { biologicalAssets, updateAssetWeight, addBiologicalAsset, deleteBiologicalAsset } = useData();
+  const {
+    biologicalAssets,
+    updateAssetWeight,
+    addBiologicalAsset,
+    deleteBiologicalAsset,
+    fairValuePerKg,
+    setFairValuePerKg,
+  } = useData();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editWeight, setEditWeight] = useState<number>(0);
   const [showQRCode, setShowQRCode] = useState<string | null>(null);
   const [scanMode, setScanMode] = useState(false);
   const [scanInput, setScanInput] = useState('');
   const [showAddForm, setShowAddForm] = useState(false);
+  const [pricePerKgInput, setPricePerKgInput] = useState<string>(String(fairValuePerKg));
   const [newAsset, setNewAsset] = useState({
     tagId: '',
     type: 'Domba' as 'Domba' | 'Kambing',
     age: 0,
     weight: 0,
   });
+
+  useEffect(() => {
+    setPricePerKgInput(String(fairValuePerKg));
+  }, [fairValuePerKg]);
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('id-ID', {
@@ -31,8 +43,8 @@ export default function BiologicalAssets() {
     setEditWeight(currentWeight);
   };
 
-  const handleSave = (id: string) => {
-    updateAssetWeight(id, editWeight);
+  const handleSave = async (id: string) => {
+    await updateAssetWeight(id, editWeight);
     setEditingId(null);
   };
 
@@ -52,10 +64,10 @@ export default function BiologicalAssets() {
     }
   };
 
-  const handleAddAsset = (e: React.FormEvent) => {
+  const handleAddAsset = async (e: React.FormEvent) => {
     e.preventDefault();
-    const fairValue = newAsset.weight * 100000;
-    addBiologicalAsset({
+    const fairValue = newAsset.weight * fairValuePerKg;
+    await addBiologicalAsset({
       ...newAsset,
       fairValue,
     });
@@ -63,10 +75,19 @@ export default function BiologicalAssets() {
     setShowAddForm(false);
   };
 
-  const handleDeleteAsset = (id: string, tagId: string) => {
+  const handleDeleteAsset = async (id: string, tagId: string) => {
     if (window.confirm(`Hapus ${tagId} dari listing? Jurnal HPP akan otomatis dibuat.`)) {
-      deleteBiologicalAsset(id);
+      await deleteBiologicalAsset(id);
     }
+  };
+
+  const handleApplyFairValuePerKg = async () => {
+    const parsed = Number(pricePerKgInput);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      alert('Harga per kg harus lebih dari 0');
+      return;
+    }
+    await setFairValuePerKg(parsed);
   };
 
   return (
@@ -105,6 +126,32 @@ export default function BiologicalAssets() {
           <h2 className="text-base mb-4" style={{ color: '#1B4332' }}>
             Tambah Aset Biologis Baru
           </h2>
+          <div className="mb-4 p-4 rounded" style={{ backgroundColor: '#F8F9FA' }}>
+            <label className="block text-sm mb-2" style={{ color: '#495057' }}>
+              Harga per Kg (Nilai Wajar)
+            </label>
+            <div className="flex gap-3">
+              <input
+                type="number"
+                value={pricePerKgInput}
+                onChange={(e) => setPricePerKgInput(e.target.value)}
+                className="w-full px-3 py-2 border rounded"
+                style={{ borderColor: '#DEE2E6' }}
+                min={1}
+              />
+              <button
+                type="button"
+                onClick={handleApplyFairValuePerKg}
+                className="px-4 py-2 rounded text-white"
+                style={{ backgroundColor: '#1B4332' }}
+              >
+                Simpan Harga/Kg
+              </button>
+            </div>
+            <p className="text-xs mt-2" style={{ color: '#6C757D' }}>
+              Nilai ini akan tersimpan dan dipakai untuk perhitungan berikutnya sampai kamu ubah lagi.
+            </p>
+          </div>
           <form onSubmit={handleAddAsset} className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div>
@@ -157,7 +204,7 @@ export default function BiologicalAssets() {
             <div className="p-3 rounded" style={{ backgroundColor: '#E7F5E9' }}>
               <div className="text-xs mb-1" style={{ color: '#495057' }}>Nilai Wajar Otomatis:</div>
               <div className="text-base" style={{ color: '#1B4332' }}>
-                {formatCurrency(newAsset.weight * 100000)}
+                {formatCurrency(newAsset.weight * fairValuePerKg)}
               </div>
             </div>
             <button
@@ -266,7 +313,7 @@ export default function BiologicalAssets() {
                     )}
                   </td>
                   <td className="px-4 py-3 text-sm" style={{ color: '#1B4332' }}>
-                    {formatCurrency(editingId === asset.id ? editWeight * 100000 : asset.fairValue)}
+                    {formatCurrency(editingId === asset.id ? editWeight * fairValuePerKg : asset.fairValue)}
                   </td>
                   <td className="px-4 py-3 text-xs" style={{ color: '#6C757D' }}>{asset.lastUpdated}</td>
                   <td className="px-4 py-3">
@@ -332,7 +379,8 @@ export default function BiologicalAssets() {
               Setiap perubahan berat akan <strong>OTOMATIS</strong>:
             </p>
             <div className="text-xs space-y-1" style={{ color: '#495057' }}>
-              <div>1️⃣ Hitung Nilai Wajar baru (Berat × Rp 100.000/kg)</div>
+              <div>1️⃣ Hitung Nilai Wajar baru (Berat × Harga/kg saat ini)</div>
+              <div>📌 Harga saat ini: Rp {Number(fairValuePerKg).toLocaleString('id-ID')}/kg</div>
               <div>2️⃣ Hitung selisih dengan Nilai Wajar lama</div>
               <div>3️⃣ Buat jurnal entry OTOMATIS ke GL:</div>
               <div className="pl-4 mt-1 p-2 rounded" style={{ backgroundColor: 'white' }}>

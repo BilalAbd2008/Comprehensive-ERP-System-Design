@@ -29,6 +29,7 @@ export default function Layout() {
     { name: 'WBS - Aset (WBSA)', href: '/wbsa', icon: FileText },
     { name: 'WBS - Liab & Ekuitas (WBSL)', href: '/wbsl', icon: FileText },
     { name: 'Working P&L (WPL)', href: '/wpl', icon: FileText },
+    { name: 'Backup Bulanan WBS', href: '/wbs-backup', icon: FileText },
   ];
 
   const laporanKeuangan = [

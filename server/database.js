@@ -1,13 +1,13 @@
-import mysql from 'mysql2/promise';
-import dotenv from 'dotenv';
+import mysql from "mysql2/promise";
+import dotenv from "dotenv";
 
 dotenv.config();
 
-const databaseName = process.env.MYSQL_DATABASE || 'hers_farm_erp';
-const mysqlHost = process.env.MYSQL_HOST || '127.0.0.1';
+const databaseName = process.env.MYSQL_DATABASE || "hers_farm_erp";
+const mysqlHost = process.env.MYSQL_HOST || "127.0.0.1";
 const mysqlPort = Number(process.env.MYSQL_PORT || 3306);
-const mysqlUser = process.env.MYSQL_USER || 'root';
-const mysqlPassword = process.env.MYSQL_PASSWORD || '';
+const mysqlUser = process.env.MYSQL_USER || "root";
+const mysqlPassword = process.env.MYSQL_PASSWORD || "";
 
 let pool;
 
@@ -28,7 +28,7 @@ function poolConfig(withDatabase = true) {
 async function ensureDatabaseExists() {
   const connection = await mysql.createConnection(poolConfig(false));
   await connection.query(
-    `CREATE DATABASE IF NOT EXISTS \`${databaseName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`
+    `CREATE DATABASE IF NOT EXISTS \`${databaseName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`,
   );
   await connection.end();
 }
@@ -51,6 +51,7 @@ async function runMigrations() {
       tag_id VARCHAR(50) NOT NULL UNIQUE,
       type ENUM('Domba', 'Kambing') NOT NULL,
       age INT NOT NULL DEFAULT 0,
+      age_updated_at DATE NOT NULL,
       weight DECIMAL(12,2) NOT NULL DEFAULT 0,
       fair_value DECIMAL(18,2) NOT NULL DEFAULT 0,
       last_updated DATE NOT NULL,
@@ -77,51 +78,112 @@ async function runMigrations() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `;
 
+  const createSettingsTable = `
+    CREATE TABLE IF NOT EXISTS app_settings (
+      setting_key VARCHAR(100) PRIMARY KEY,
+      setting_value VARCHAR(255) NOT NULL,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `;
+
+  const createMonthlyBackupsTable = `
+    CREATE TABLE IF NOT EXISTS monthly_backups (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      period CHAR(7) NOT NULL UNIQUE,
+      snapshot_json LONGTEXT NOT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_monthly_backups_period (period)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `;
+
   await pool.query(createUsersTable);
   await pool.query(createAssetsTable);
   await pool.query(createJournalTable);
+  await pool.query(createSettingsTable);
+  await pool.query(createMonthlyBackupsTable);
+
+  const [columnRows] = await pool.query(
+    "SELECT COUNT(*) AS total FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'biological_assets' AND COLUMN_NAME = 'age_updated_at'",
+    [databaseName],
+  );
+
+  if (columnRows[0].total === 0) {
+    await pool.query(
+      "ALTER TABLE biological_assets ADD COLUMN age_updated_at DATE NULL AFTER age",
+    );
+    await pool.query(
+      "UPDATE biological_assets SET age_updated_at = last_updated WHERE age_updated_at IS NULL",
+    );
+    await pool.query(
+      "ALTER TABLE biological_assets MODIFY COLUMN age_updated_at DATE NOT NULL",
+    );
+  }
 }
 
-async function seedDefaults(defaultAssets, defaultAdminUser) {
-  const [userRows] = await pool.query('SELECT COUNT(*) AS total FROM users');
+async function seedDefaults(defaultAssets, defaultAdminUser, defaultFairValuePerKg) {
+  const [userRows] = await pool.query("SELECT COUNT(*) AS total FROM users");
   if (userRows[0].total === 0) {
-    const { createHash } = await import('crypto');
-    const passwordHash = createHash('sha256').update(defaultAdminUser.password).digest('hex');
+    const { createHash } = await import("crypto");
+    const passwordHash = createHash("sha256")
+      .update(defaultAdminUser.password)
+      .digest("hex");
     await pool.query(
-      'INSERT INTO users (username, password_hash, full_name, role) VALUES (?, ?, ?, ?)',
-      [defaultAdminUser.username, passwordHash, 'Administrator', 'admin']
+      "INSERT INTO users (username, password_hash, full_name, role) VALUES (?, ?, ?, ?)",
+      [defaultAdminUser.username, passwordHash, "Administrator", "admin"],
     );
   }
 
-  const [assetRows] = await pool.query('SELECT COUNT(*) AS total FROM biological_assets');
-  if (assetRows[0].total === 0 && Array.isArray(defaultAssets) && defaultAssets.length > 0) {
+  const [assetRows] = await pool.query(
+    "SELECT COUNT(*) AS total FROM biological_assets",
+  );
+  if (
+    assetRows[0].total === 0 &&
+    Array.isArray(defaultAssets) &&
+    defaultAssets.length > 0
+  ) {
     const values = defaultAssets.map((asset) => [
       asset.id,
       asset.tagId,
       asset.type,
       asset.age,
+      asset.ageUpdatedAt || asset.lastUpdated,
       asset.weight,
       asset.fairValue,
       asset.lastUpdated,
     ]);
     await pool.query(
-      'INSERT INTO biological_assets (id, tag_id, type, age, weight, fair_value, last_updated) VALUES ?',
-      [values]
+      "INSERT INTO biological_assets (id, tag_id, type, age, age_updated_at, weight, fair_value, last_updated) VALUES ?",
+      [values],
+    );
+  }
+
+  const [settingRows] = await pool.query(
+    "SELECT COUNT(*) AS total FROM app_settings WHERE setting_key = 'fair_value_per_kg'",
+  );
+  if (settingRows[0].total === 0) {
+    await pool.query(
+      "INSERT INTO app_settings (setting_key, setting_value) VALUES ('fair_value_per_kg', ?)",
+      [String(defaultFairValuePerKg || 100000)],
     );
   }
 }
 
-export async function initDatabase({ defaultAssets = [], defaultAdminUser } = {}) {
+export async function initDatabase({
+  defaultAssets = [],
+  defaultAdminUser,
+  defaultFairValuePerKg = 100000,
+} = {}) {
   await ensureDatabaseExists();
   pool = mysql.createPool(poolConfig(true));
   await runMigrations();
-  await seedDefaults(defaultAssets, defaultAdminUser);
+  await seedDefaults(defaultAssets, defaultAdminUser, defaultFairValuePerKg);
   return pool;
 }
 
 export function getPool() {
   if (!pool) {
-    throw new Error('Database is not initialized yet.');
+    throw new Error("Database is not initialized yet.");
   }
   return pool;
 }
