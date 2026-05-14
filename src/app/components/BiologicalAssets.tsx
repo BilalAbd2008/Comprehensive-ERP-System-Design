@@ -12,7 +12,6 @@ export default function BiologicalAssets() {
     deleteBiologicalAsset,
     fairValuePerKg,
     setFairValuePerKg,
-    addJournalEntry,
   } = useData();
   
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -67,11 +66,8 @@ export default function BiologicalAssets() {
     const asset = biologicalAssets.find(a => a.id === id);
     if (!asset) return;
 
-    const oldFairValue = asset.fairValue;
     const newFairValue = editData.weight * fairValuePerKg;
-    const difference = newFairValue - oldFairValue;
 
-    // Update asset
     await updateBiologicalAsset(id, {
       weight: editData.weight,
       fairValue: newFairValue,
@@ -80,47 +76,6 @@ export default function BiologicalAssets() {
       loss: editData.loss || 0,
       lastUpdated: editData.manualDate ? editData.lastUpdated : new Date().toISOString().split('T')[0],
     });
-
-    // Auto-create journal entries if there are profit/loss changes
-    if (difference !== 0 || editData.profit > 0 || editData.loss > 0) {
-      if (difference !== 0) {
-        // Fair value adjustment
-        await addJournalEntry({
-          date: editData.manualDate ? editData.lastUpdated : new Date().toISOString().split('T')[0],
-          description: `Penyesuaian Nilai Wajar ${asset.tagId} (${asset.weight}kg → ${editData.weight}kg)`,
-          debitAccount: difference > 0 ? "1-3000 Aset Biologis" : "5-4000 Kerugian Nilai Wajar",
-          debitAssetId: id,
-          debitAmount: Math.abs(difference),
-          creditAccount: difference > 0 ? "4-2000 Keuntungan Nilai Wajar" : "1-3000 Aset Biologis",
-          creditAssetId: difference < 0 ? id : undefined,
-          creditAmount: Math.abs(difference),
-        });
-      }
-
-      // Profit journal entry
-      if (editData.profit > 0) {
-        await addJournalEntry({
-          date: editData.manualDate ? editData.lastUpdated : new Date().toISOString().split('T')[0],
-          description: `Keuntungan ${asset.tagId} - ${asset.type}`,
-          debitAccount: "1-1100 Kas",
-          debitAmount: editData.profit,
-          creditAccount: "4-1000 Pendapatan Penjualan",
-          creditAmount: editData.profit,
-        });
-      }
-
-      // Loss journal entry
-      if (editData.loss > 0) {
-        await addJournalEntry({
-          date: editData.manualDate ? editData.lastUpdated : new Date().toISOString().split('T')[0],
-          description: `Kerugian ${asset.tagId} - ${asset.type}`,
-          debitAccount: "5-5000 Beban Lain-lain",
-          debitAmount: editData.loss,
-          creditAccount: "1-1100 Kas",
-          creditAmount: editData.loss,
-        });
-      }
-    }
 
     setEditingId(null);
   };
@@ -143,14 +98,22 @@ export default function BiologicalAssets() {
   const handleAddAsset = async (e: React.FormEvent) => {
     e.preventDefault();
     const fairValue = newAsset.weight * fairValuePerKg;
+    const purchasePrice = newAsset.purchasePrice || fairValue;
     await addBiologicalAsset({
       ...newAsset,
       fairValue,
-      purchasePrice: newAsset.purchasePrice || fairValue,
+      purchasePrice,
+      profit: Math.max(fairValue - purchasePrice, 0),
+      loss: Math.max(purchasePrice - fairValue, 0),
     });
     setNewAsset({ tagId: '', type: 'Domba', age: 0, weight: 0, purchasePrice: 0 });
     setShowAddForm(false);
   };
+
+  const newAssetFairValue = newAsset.weight * fairValuePerKg;
+  const newAssetPurchasePrice = newAsset.purchasePrice || newAssetFairValue;
+  const newAssetProfit = Math.max(newAssetFairValue - newAssetPurchasePrice, 0);
+  const newAssetLoss = Math.max(newAssetPurchasePrice - newAssetFairValue, 0);
 
   const handleDeleteAsset = async (id: string, tagId: string) => {
     if (window.confirm(`Hapus ${tagId} dari listing? Jurnal HPP akan otomatis dibuat.`)) {
@@ -293,13 +256,27 @@ export default function BiologicalAssets() {
               <div className="p-3 rounded" style={{ backgroundColor: '#E7F5E9' }}>
                 <div className="text-xs mb-1" style={{ color: '#495057' }}>Nilai Wajar Otomatis:</div>
                 <div className="text-base" style={{ color: '#1B4332' }}>
-                  {formatCurrency(newAsset.weight * fairValuePerKg)}
+                  {formatCurrency(newAssetFairValue)}
                 </div>
               </div>
               <div className="p-3 rounded" style={{ backgroundColor: '#FFF3CD' }}>
                 <div className="text-xs mb-1" style={{ color: '#495057' }}>Harga Beli:</div>
                 <div className="text-base" style={{ color: '#856404' }}>
-                  {formatCurrency(newAsset.purchasePrice || newAsset.weight * fairValuePerKg)}
+                  {formatCurrency(newAssetPurchasePrice)}
+                </div>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="p-3 rounded" style={{ backgroundColor: '#E7F5E9' }}>
+                <div className="text-xs mb-1" style={{ color: '#495057' }}>Untung otomatis:</div>
+                <div className="text-base" style={{ color: '#1B4332' }}>
+                  {formatCurrency(newAssetProfit)}
+                </div>
+              </div>
+              <div className="p-3 rounded" style={{ backgroundColor: '#F8D7DA' }}>
+                <div className="text-xs mb-1" style={{ color: '#495057' }}>Rugi otomatis:</div>
+                <div className="text-base" style={{ color: '#721C24' }}>
+                  {formatCurrency(newAssetLoss)}
                 </div>
               </div>
             </div>

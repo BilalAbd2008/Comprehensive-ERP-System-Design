@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useData, ChartOfAccount } from '../context/DataContext';
-import { Plus, Pencil, Check, X, Trash2, ChevronDown, ChevronUp, Download, Upload } from 'lucide-react';
+import { useData, ChartOfAccount, JournalDocument } from '../context/DataContext';
+import { Plus, Pencil, Check, X, Trash2, ChevronDown, ChevronUp, Download, Upload, Eye } from 'lucide-react';
 
 export default function GeneralLedger() {
   const {
@@ -45,7 +45,8 @@ export default function GeneralLedger() {
     creditAccount: '',
     creditAssetId: '',
     creditAmount: '',
-    documentFile: null as File | null,
+    debitDocumentFile: null as File | null,
+    creditDocumentFile: null as File | null,
   });
 
   // Edit Form
@@ -60,7 +61,8 @@ export default function GeneralLedger() {
     creditAmount: '',
   });
 
-  const [documentsPreview, setDocumentsPreview] = useState<{ [key: string]: string[] }>({});
+  const [documentsPreview, setDocumentsPreview] = useState<{ [key: string]: JournalDocument[] }>({});
+  const [previewDocument, setPreviewDocument] = useState<JournalDocument | null>(null);
 
   useEffect(() => {
     // Load documents for all journal entries
@@ -68,11 +70,32 @@ export default function GeneralLedger() {
     journalEntries.forEach(entry => {
       const docs = getJournalDocuments(entry.id);
       if (docs.length > 0) {
-        preview[entry.id] = docs.map(d => d.fileName);
+        preview[entry.id] = docs;
       }
     });
     setDocumentsPreview(preview);
   }, [journalEntries, getJournalDocuments]);
+
+  const sideLabel = (side?: JournalDocument['documentSide']) => {
+    if (side === 'debit') return 'Debit';
+    if (side === 'credit') return 'Kredit';
+    return 'Umum';
+  };
+
+  const readFileAsDataUrl = (file: File) =>
+    new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (event) => resolve(String(event.target?.result || ''));
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    });
+
+  const downloadDocument = (doc: JournalDocument) => {
+    const link = document.createElement('a');
+    link.href = doc.fileData;
+    link.download = doc.fileName;
+    link.click();
+  };
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('id-ID', {
@@ -160,20 +183,22 @@ export default function GeneralLedger() {
 
     const journalId = await addJournalEntry(entry);
 
-    // Handle document upload
-    if (formData.documentFile) {
-      const reader = new FileReader();
-      reader.onload = async (e) => {
-        const fileData = e.target?.result as string;
-        await addJournalDocument({
-          journalEntryId: journalId || String(Date.now()),
-          fileName: formData.documentFile!.name,
-          fileData: fileData,
-          fileType: formData.documentFile!.type,
-          uploadedAt: new Date().toISOString(),
-        });
-      };
-      reader.readAsDataURL(formData.documentFile);
+    const uploads = [
+      { file: formData.debitDocumentFile, documentSide: 'debit' as const },
+      { file: formData.creditDocumentFile, documentSide: 'credit' as const },
+    ];
+
+    for (const upload of uploads) {
+      if (!upload.file) continue;
+      const fileData = await readFileAsDataUrl(upload.file);
+      await addJournalDocument({
+        journalEntryId: journalId,
+        documentSide: upload.documentSide,
+        fileName: upload.file.name,
+        fileData,
+        fileType: upload.file.type || 'application/octet-stream',
+        uploadedAt: new Date().toISOString(),
+      });
     }
 
     setShowForm(false);
@@ -186,7 +211,8 @@ export default function GeneralLedger() {
       creditAccount: '',
       creditAssetId: '',
       creditAmount: '',
-      documentFile: null,
+      debitDocumentFile: null,
+      creditDocumentFile: null,
     });
   };
 
@@ -230,6 +256,28 @@ export default function GeneralLedger() {
     a.download = `buku-besar-${new Date().toISOString().split('T')[0]}.csv`;
     a.click();
     window.URL.revokeObjectURL(url);
+  };
+
+  const renderDocumentButtons = (journalEntryId: string) => {
+    const docs = documentsPreview[journalEntryId] || [];
+    if (docs.length === 0) return null;
+    return (
+      <div className="flex flex-wrap justify-center gap-1">
+        {docs.map((doc) => (
+          <button
+            key={doc.id}
+            type="button"
+            onClick={() => setPreviewDocument(doc)}
+            className="text-xs px-2 py-1 rounded flex items-center gap-1"
+            style={{ backgroundColor: '#E7F5E9', color: '#1B4332' }}
+            title={`${sideLabel(doc.documentSide)} - ${doc.fileName}`}
+          >
+            <Eye size={11} />
+            {sideLabel(doc.documentSide)}
+          </button>
+        ))}
+      </div>
+    );
   };
 
   const renderCOAHierarchy = (parentCode?: string, level = 0) => {
@@ -447,24 +495,40 @@ export default function GeneralLedger() {
                   </div>
                 </div>
 
-                <div className="p-4 rounded-lg" style={{ backgroundColor: '#F0F8FF' }}>
-                  <label className="block text-sm mb-2" style={{ color: '#495057' }}>
-                    📎 Dokumen Pendukung (Opsional)
-                  </label>
-                  <p className="text-xs mb-2" style={{ color: '#6C757D' }}>
-                    Upload bukti pembayaran, bukti gaji, invoice, atau dokumen pendukung lainnya
-                  </p>
-                  <input
-                    type="file"
-                    onChange={(e) => setFormData({ ...formData, documentFile: e.target.files?.[0] || null })}
-                    className="w-full px-3 py-2 border rounded text-sm"
-                    style={{ borderColor: '#DEE2E6' }}
-                  />
-                  {formData.documentFile && (
-                    <div className="text-xs mt-1" style={{ color: '#28A745' }}>
-                      ✓ {formData.documentFile.name}
-                    </div>
-                  )}
+                <div className="grid grid-cols-2 gap-6">
+                  <div className="p-4 rounded-lg" style={{ backgroundColor: '#F0F8FF' }}>
+                    <label className="block text-sm mb-2" style={{ color: '#495057' }}>
+                      Dokumen Pendukung Debit
+                    </label>
+                    <input
+                      type="file"
+                      onChange={(e) => setFormData({ ...formData, debitDocumentFile: e.target.files?.[0] || null })}
+                      className="w-full px-3 py-2 border rounded text-sm"
+                      style={{ borderColor: '#DEE2E6' }}
+                    />
+                    {formData.debitDocumentFile && (
+                      <div className="text-xs mt-1" style={{ color: '#28A745' }}>
+                        {formData.debitDocumentFile.name}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="p-4 rounded-lg" style={{ backgroundColor: '#F0F8FF' }}>
+                    <label className="block text-sm mb-2" style={{ color: '#495057' }}>
+                      Dokumen Pendukung Kredit
+                    </label>
+                    <input
+                      type="file"
+                      onChange={(e) => setFormData({ ...formData, creditDocumentFile: e.target.files?.[0] || null })}
+                      className="w-full px-3 py-2 border rounded text-sm"
+                      style={{ borderColor: '#DEE2E6' }}
+                    />
+                    {formData.creditDocumentFile && (
+                      <div className="text-xs mt-1" style={{ color: '#28A745' }}>
+                        {formData.creditDocumentFile.name}
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 <div className="flex gap-3">
@@ -559,11 +623,7 @@ export default function GeneralLedger() {
                           <td className="px-3 py-2 text-xs">{entry.creditAccount}</td>
                           <td className="px-3 py-2 text-right">{formatCurrency(entry.creditAmount)}</td>
                           <td className="px-3 py-2 text-center">
-                            {documentsPreview[entry.id] && (
-                              <span className="text-xs px-2 py-1 rounded" style={{ backgroundColor: '#E7F5E9', color: '#1B4332' }}>
-                                {documentsPreview[entry.id]?.length || 0}
-                              </span>
-                            )}
+                            {renderDocumentButtons(entry.id)}
                           </td>
                           <td className="px-3 py-2 text-center">
                             <button
@@ -646,6 +706,55 @@ export default function GeneralLedger() {
           <h3 className="text-sm mb-3" style={{ color: '#1B4332' }}>Daftar Akun Hierarki</h3>
           <div className="border rounded" style={{ borderColor: '#DEE2E6' }}>
             {renderCOAHierarchy()}
+          </div>
+        </div>
+      )}
+
+      {previewDocument && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6">
+          <div className="bg-white rounded-lg border w-full max-w-4xl max-h-[90vh] overflow-hidden" style={{ borderColor: '#DEE2E6' }}>
+            <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: '#DEE2E6' }}>
+              <div>
+                <h2 className="text-base" style={{ color: '#1B4332' }}>{previewDocument.fileName}</h2>
+                <p className="text-xs" style={{ color: '#6C757D' }}>
+                  Dokumen {sideLabel(previewDocument.documentSide)}
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => downloadDocument(previewDocument)}
+                  className="px-3 py-2 rounded text-white text-sm"
+                  style={{ backgroundColor: '#1B4332' }}
+                >
+                  Download
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPreviewDocument(null)}
+                  className="px-3 py-2 rounded text-sm"
+                  style={{ backgroundColor: '#E9ECEF', color: '#495057' }}
+                >
+                  Tutup
+                </button>
+              </div>
+            </div>
+            <div className="p-5 overflow-auto" style={{ maxHeight: '72vh' }}>
+              {previewDocument.fileType.startsWith('image/') ? (
+                <img
+                  src={previewDocument.fileData}
+                  alt={previewDocument.fileName}
+                  className="max-w-full mx-auto"
+                />
+              ) : (
+                <iframe
+                  src={previewDocument.fileData}
+                  title={previewDocument.fileName}
+                  className="w-full h-[65vh] border rounded"
+                  style={{ borderColor: '#DEE2E6' }}
+                />
+              )}
+            </div>
           </div>
         </div>
       )}

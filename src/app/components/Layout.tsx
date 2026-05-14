@@ -75,7 +75,10 @@ export default function Layout() {
           <h1 className="text-xl">Hers Farm</h1>
           <p className="text-xs mt-1 opacity-80">ERP Peternakan</p>
           {currentUser && (
-            <div className="mt-3 pt-3 border-t" style={{ borderColor: "#2D6A4F" }}>
+            <div
+              className="mt-3 pt-3 border-t"
+              style={{ borderColor: "#2D6A4F" }}
+            >
               <p className="text-xs opacity-60">Logged in as:</p>
               <p className="text-sm font-semibold">{currentUser.fullName}</p>
               <p className="text-xs opacity-60">@{currentUser.username}</p>
@@ -195,8 +198,12 @@ export default function Layout() {
               to="/admin-users"
               className="flex items-center gap-3 px-3 py-2.5 rounded transition-colors text-sm"
               style={{
-                backgroundColor: location.pathname === "/admin-users" ? "#FFB703" : "transparent",
-                color: location.pathname === "/admin-users" ? "#212529" : "white",
+                backgroundColor:
+                  location.pathname === "/admin-users"
+                    ? "#FFB703"
+                    : "transparent",
+                color:
+                  location.pathname === "/admin-users" ? "#212529" : "white",
               }}
             >
               <Users size={18} />
@@ -206,8 +213,12 @@ export default function Layout() {
               to="/sop-flowchart"
               className="flex items-center gap-3 px-3 py-2.5 rounded transition-colors text-sm"
               style={{
-                backgroundColor: location.pathname === "/sop-flowchart" ? "#FFB703" : "transparent",
-                color: location.pathname === "/sop-flowchart" ? "#212529" : "white",
+                backgroundColor:
+                  location.pathname === "/sop-flowchart"
+                    ? "#FFB703"
+                    : "transparent",
+                color:
+                  location.pathname === "/sop-flowchart" ? "#212529" : "white",
               }}
             >
               <Workflow size={18} />
@@ -226,7 +237,7 @@ export default function Layout() {
             style={{ backgroundColor: "#2D6A4F" }}
           >
             <Play size={16} />
-            Simulasi 2025
+            Data Contoh
           </button>
 
           <button

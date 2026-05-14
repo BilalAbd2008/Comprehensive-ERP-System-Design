@@ -1,7 +1,7 @@
 import { useData } from '../context/DataContext';
 
 export default function WorkingBalanceSheetAsset() {
-  const { journalEntries, biologicalAssets } = useData();
+  const { journalEntries, biologicalAssets, chartOfAccounts } = useData();
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('id-ID', {
@@ -11,25 +11,38 @@ export default function WorkingBalanceSheetAsset() {
     }).format(value);
   };
 
+  const accountCode = (account: string) => account.split(' ')[0] || account;
+
   // Calculate balances from GL
   const balances: Record<string, number> = {};
   journalEntries.forEach(entry => {
-    if (!balances[entry.debitAccount]) balances[entry.debitAccount] = 0;
-    if (!balances[entry.creditAccount]) balances[entry.creditAccount] = 0;
-    balances[entry.debitAccount] += entry.debitAmount;
-    balances[entry.creditAccount] -= entry.creditAmount;
+    const debitCode = accountCode(entry.debitAccount);
+    const creditCode = accountCode(entry.creditAccount);
+    if (!balances[debitCode]) balances[debitCode] = 0;
+    if (!balances[creditCode]) balances[creditCode] = 0;
+    balances[debitCode] += entry.debitAmount;
+    balances[creditCode] -= entry.creditAmount;
   });
 
+  const childAccounts = (parentCode: string) =>
+    chartOfAccounts
+      .filter(account => account.parentCode === parentCode)
+      .sort((a, b) => a.code.localeCompare(b.code));
+
+  const balanceByCode = (code: string) => balances[code] || 0;
+  const balanceIncludingChildren = (code: string): number =>
+    balanceByCode(code) + childAccounts(code).reduce((sum, child) => sum + balanceIncludingChildren(child.code), 0);
+
   // ASET LANCAR
-  const kas = balances['1-1100 Kas'] || 0;
-  const bank = balances['1-1200 Bank'] || 0;
-  const persediaanPakan = balances['1-2100 Persediaan Pakan'] || 0;
+  const kas = balanceIncludingChildren('1-1100');
+  const bank = balanceIncludingChildren('1-1200');
+  const persediaanPakan = balanceIncludingChildren('1-2100');
   const totalAsetLancar = kas + bank + persediaanPakan;
 
   // ASET TIDAK LANCAR
-  const asetBiologis = balances['1-3000 Aset Biologis'] || 0;
-  const asetTetap = balances['1-4100 Aset Tetap - Kandang'] || 0;
-  const akumulasiPenyusutan = Math.abs(balances['1-4200 Akumulasi Penyusutan'] || 0);
+  const asetBiologis = balanceIncludingChildren('1-3000');
+  const asetTetap = balanceIncludingChildren('1-4100');
+  const akumulasiPenyusutan = Math.abs(balanceIncludingChildren('1-4200'));
   const asetTetapNeto = asetTetap - akumulasiPenyusutan;
   const totalAsetTidakLancar = asetBiologis + asetTetapNeto;
 
@@ -75,6 +88,19 @@ export default function WorkingBalanceSheetAsset() {
                   {bank > 0 ? formatCurrency(bank) : '-'}
                 </span>
               </div>
+              {childAccounts('1-1200').map(account => {
+                const amount = balanceIncludingChildren(account.code);
+                return (
+                  <div key={account.code} className="grid grid-cols-2 pl-4 py-1">
+                    <span className="text-xs" style={{ color: '#6C757D' }}>
+                      {account.code} - {account.name}
+                    </span>
+                    <span className="text-xs text-right" style={{ color: '#212529' }}>
+                      {amount > 0 ? formatCurrency(amount) : '-'}
+                    </span>
+                  </div>
+                );
+              })}
 
               <div className="py-2">
                 <div className="grid grid-cols-2">

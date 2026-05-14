@@ -6,7 +6,7 @@ export default function AdminUsers() {
   const { admins, addAdmin, updateAdmin, deleteAdmin, currentUser } = useData();
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  
+
   const [formData, setFormData] = useState({
     username: "",
     fullName: "",
@@ -118,12 +118,16 @@ export default function AdminUsers() {
     <div className="p-8">
       <div className="mb-6 flex items-center justify-between">
         <div>
-          <h1 className="text-2xl mb-1 flex items-center gap-2" style={{ color: "#1B4332" }}>
+          <h1
+            className="text-2xl mb-1 flex items-center gap-2"
+            style={{ color: "#1B4332" }}
+          >
             <Shield size={28} />
             Manajemen Admin Users
           </h1>
           <p className="text-sm" style={{ color: "#6C757D" }}>
-            Kelola akun admin, manager, dan operator. Admin Utama: {admins.filter(a => a.role === "admin").length}
+            Kelola akun admin, manager, dan operator. Admin Utama:{" "}
+            {admins.filter((a) => a.role === "admin").length}
           </p>
         </div>
         {isAdminUser && (
@@ -141,67 +145,95 @@ export default function AdminUsers() {
       {!isAdminUser && (
         <div
           className="p-4 rounded-lg mb-6 border"
-          style={{ backgroundColor: "#FFF3CD", borderColor: "#FFE69C", color: "#856404" }}
+          style={{
+            backgroundColor: "#FFF3CD",
+            borderColor: "#FFE69C",
+            color: "#856404",
+          }}
         >
           <p className="text-sm">
-            ⚠️ Anda tidak memiliki izin untuk mengelola admin users. Hubungi admin utama.
+            ⚠️ Anda tidak memiliki izin untuk mengelola admin users. Hubungi
+            admin utama.
           </p>
         </div>
       )}
 
       {showForm && isAdminUser && (
-        <div className="bg-white p-6 rounded-lg border mb-6" style={{ borderColor: "#DEE2E6" }}>
+        <div
+          className="bg-white p-6 rounded-lg border mb-6"
+          style={{ borderColor: "#DEE2E6" }}
+        >
           <h2 className="text-base mb-4" style={{ color: "#1B4332" }}>
             Tambah Admin Baru
           </h2>
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm mb-2" style={{ color: "#495057" }}>
+                <label
+                  className="block text-sm mb-2"
+                  style={{ color: "#495057" }}
+                >
                   Username
                 </label>
                 <input
                   type="text"
                   value={formData.username}
-                  onChange={(e) => setFormData({ ...formData, username: e.target.value })}
+                  onChange={(e) =>
+                    setFormData({ ...formData, username: e.target.value })
+                  }
                   placeholder="Contoh: admin_budi"
                   className="w-full px-3 py-2 border rounded"
                   style={{ borderColor: "#DEE2E6" }}
                 />
               </div>
               <div>
-                <label className="block text-sm mb-2" style={{ color: "#495057" }}>
+                <label
+                  className="block text-sm mb-2"
+                  style={{ color: "#495057" }}
+                >
                   Nama Lengkap
                 </label>
                 <input
                   type="text"
                   value={formData.fullName}
-                  onChange={(e) => setFormData({ ...formData, fullName: e.target.value })}
+                  onChange={(e) =>
+                    setFormData({ ...formData, fullName: e.target.value })
+                  }
                   placeholder="Contoh: Budi Santoso"
                   className="w-full px-3 py-2 border rounded"
                   style={{ borderColor: "#DEE2E6" }}
                 />
               </div>
               <div>
-                <label className="block text-sm mb-2" style={{ color: "#495057" }}>
+                <label
+                  className="block text-sm mb-2"
+                  style={{ color: "#495057" }}
+                >
                   Email (Opsional)
                 </label>
                 <input
                   type="email"
                   value={formData.email}
-                  onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                  onChange={(e) =>
+                    setFormData({ ...formData, email: e.target.value })
+                  }
                   placeholder="budi@example.com"
                   className="w-full px-3 py-2 border rounded"
                   style={{ borderColor: "#DEE2E6" }}
                 />
               </div>
               <div>
-                <label className="block text-sm mb-2" style={{ color: "#495057" }}>
+                <label
+                  className="block text-sm mb-2"
+                  style={{ color: "#495057" }}
+                >
                   Role
                 </label>
                 <select
                   value={formData.role}
-                  onChange={(e) => setFormData({ ...formData, role: e.target.value as any })}
+                  onChange={(e) =>
+                    setFormData({ ...formData, role: e.target.value as any })
+                  }
                   className="w-full px-3 py-2 border rounded"
                   style={{ borderColor: "#DEE2E6" }}
                 >
@@ -211,12 +243,16 @@ export default function AdminUsers() {
                 </select>
               </div>
             </div>
-            <div className="p-4 rounded-lg" style={{ backgroundColor: "#F8F9FA" }}>
+            <div
+              className="p-4 rounded-lg"
+              style={{ backgroundColor: "#F8F9FA" }}
+            >
               <p className="text-xs mb-2" style={{ color: "#495057" }}>
                 <strong>Password Default:</strong> admin123
               </p>
               <p className="text-xs" style={{ color: "#495057" }}>
-                Admin baru dapat login dengan username dan password default ini. Mereka dapat mengubah password setelah login.
+                Admin baru dapat login dengan username dan password default ini.
+                Mereka dapat mengubah password setelah login.
               </p>
             </div>
             <div className="flex gap-3">
@@ -260,27 +296,38 @@ export default function AdminUsers() {
                     <input
                       type="text"
                       value={editData.username}
-                      onChange={(e) => setEditData({ ...editData, username: e.target.value })}
+                      onChange={(e) =>
+                        setEditData({ ...editData, username: e.target.value })
+                      }
                       className="px-3 py-2 border rounded text-sm"
                       style={{ borderColor: "#DEE2E6" }}
                     />
                     <input
                       type="text"
                       value={editData.fullName}
-                      onChange={(e) => setEditData({ ...editData, fullName: e.target.value })}
+                      onChange={(e) =>
+                        setEditData({ ...editData, fullName: e.target.value })
+                      }
                       className="px-3 py-2 border rounded text-sm"
                       style={{ borderColor: "#DEE2E6" }}
                     />
                     <input
                       type="email"
                       value={editData.email}
-                      onChange={(e) => setEditData({ ...editData, email: e.target.value })}
+                      onChange={(e) =>
+                        setEditData({ ...editData, email: e.target.value })
+                      }
                       className="px-3 py-2 border rounded text-sm"
                       style={{ borderColor: "#DEE2E6" }}
                     />
                     <select
                       value={editData.role}
-                      onChange={(e) => setEditData({ ...editData, role: e.target.value as any })}
+                      onChange={(e) =>
+                        setEditData({
+                          ...editData,
+                          role: e.target.value as any,
+                        })
+                      }
                       className="px-3 py-2 border rounded text-sm"
                       style={{ borderColor: "#DEE2E6" }}
                     >
@@ -311,18 +358,27 @@ export default function AdminUsers() {
                   <div className="flex-1">
                     <div className="flex items-center gap-3">
                       <div>
-                        <h3 className="text-sm font-semibold" style={{ color: "#212529" }}>
+                        <h3
+                          className="text-sm font-semibold"
+                          style={{ color: "#212529" }}
+                        >
                           {admin.fullName}
                           {isCurrent && (
                             <span
                               className="ml-2 text-xs px-2 py-1 rounded"
-                              style={{ backgroundColor: "#E7F5E9", color: "#1B4332" }}
+                              style={{
+                                backgroundColor: "#E7F5E9",
+                                color: "#1B4332",
+                              }}
                             >
                               (You)
                             </span>
                           )}
                         </h3>
-                        <p className="text-xs mt-1" style={{ color: "#6C757D" }}>
+                        <p
+                          className="text-xs mt-1"
+                          style={{ color: "#6C757D" }}
+                        >
                           @{admin.username}
                           {admin.email && ` • ${admin.email}`}
                         </p>
@@ -354,12 +410,17 @@ export default function AdminUsers() {
                         <button
                           onClick={() => handleEditAdmin(admin.id, admin)}
                           className="p-2 rounded transition-colors"
-                          style={{ backgroundColor: "#FFB703", color: "#212529" }}
+                          style={{
+                            backgroundColor: "#FFB703",
+                            color: "#212529",
+                          }}
                         >
                           <Pencil size={14} />
                         </button>
                         <button
-                          onClick={() => handleDeleteAdmin(admin.id, admin.username)}
+                          onClick={() =>
+                            handleDeleteAdmin(admin.id, admin.username)
+                          }
                           className="p-2 rounded transition-colors"
                           style={{ backgroundColor: "#DC3545", color: "white" }}
                         >
@@ -375,30 +436,40 @@ export default function AdminUsers() {
         })}
       </div>
 
-      <div className="mt-8 p-6 rounded-lg border" style={{ backgroundColor: "#F8F9FA", borderColor: "#DEE2E6" }}>
+      <div
+        className="mt-8 p-6 rounded-lg border"
+        style={{ backgroundColor: "#F8F9FA", borderColor: "#DEE2E6" }}
+      >
         <h3 className="text-sm font-semibold mb-3" style={{ color: "#1B4332" }}>
           📋 Penjelasan Role
         </h3>
         <div className="space-y-2 text-xs" style={{ color: "#495057" }}>
           <div>
-            <strong>Admin Utama:</strong> Akses penuh ke semua fitur dan manajemen admin lainnya
+            <strong>Admin Utama:</strong> Akses penuh ke semua fitur dan
+            manajemen admin lainnya
           </div>
           <div>
-            <strong>Manager:</strong> Akses ke semua data dan laporan, tapi tidak bisa mengelola admin
+            <strong>Manager:</strong> Akses ke semua data dan laporan, tapi
+            tidak bisa mengelola admin
           </div>
           <div>
-            <strong>Operator:</strong> Akses terbatas untuk input data aset dan jurnal saja
+            <strong>Operator:</strong> Akses terbatas untuk input data aset dan
+            jurnal saja
           </div>
         </div>
       </div>
 
-      <div className="mt-4 p-6 rounded-lg border" style={{ backgroundColor: "#E7F5E9", borderColor: "#B8E6C9" }}>
+      <div
+        className="mt-4 p-6 rounded-lg border"
+        style={{ backgroundColor: "#E7F5E9", borderColor: "#B8E6C9" }}
+      >
         <h3 className="text-sm font-semibold mb-2" style={{ color: "#1B4332" }}>
           ✅ Tracking User di Semua Data
         </h3>
         <p className="text-xs" style={{ color: "#495057" }}>
-          Setiap aset, transaksi, dan perubahan akan mencatat username admin yang melakukan update.
-          Ini membantu tracking audit trail untuk compliance dan akuntabilitas.
+          Setiap aset, transaksi, dan perubahan akan mencatat username admin
+          yang melakukan update. Ini membantu tracking audit trail untuk
+          compliance dan akuntabilitas.
         </p>
       </div>
     </div>

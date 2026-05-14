@@ -6,6 +6,7 @@ import {
   defaultAdminUser,
   defaultAssets,
   defaultFairValuePerKg,
+  defaultJournalDocuments,
   defaultJournalEntries,
 } from "./defaultState.js";
 import { getPool, initDatabase, withTransaction } from "./database.js";
@@ -131,8 +132,11 @@ function normalizeJournalDocument(row) {
   return {
     id: String(row.id),
     journalEntryId: String(row.journal_entry_id),
+    documentSide: row.document_side || "general",
     fileName: row.file_name,
-    fileData: row.file_data,
+    fileData: Buffer.isBuffer(row.file_data)
+      ? row.file_data.toString("utf8")
+      : row.file_data,
     fileType: row.file_type,
     uploadedAt: row.uploaded_at,
     uploadedBy: row.uploaded_by,
@@ -202,6 +206,18 @@ function toJournalValues(entries) {
   ]);
 }
 
+function toJournalDocumentValues(documents) {
+  return documents.map((document) => [
+    String(document.id),
+    String(document.journalEntryId),
+    document.documentSide || "general",
+    document.fileName,
+    document.fileData,
+    document.fileType || null,
+    document.uploadedBy || "system",
+  ]);
+}
+
 function getCurrentPeriod(date = new Date()) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -234,14 +250,22 @@ function calculateWbsSummary(journalEntries, biologicalAssets) {
   let bebanLain = 0;
 
   journalEntries.forEach((entry) => {
-    if (entry.creditAccount.includes("Pendapatan Penjualan")) pendapatanPenjualan += Number(entry.creditAmount || 0);
-    if (entry.creditAccount.includes("Keuntungan Nilai Wajar")) keuntunganNilaiWajar += Number(entry.creditAmount || 0);
-    if (entry.creditAccount.includes("Pendapatan Lain-lain")) pendapatanLain += Number(entry.creditAmount || 0);
-    if (entry.debitAccount.includes("Harga Pokok Penjualan")) hpp += Number(entry.debitAmount || 0);
-    if (entry.debitAccount.includes("Beban Gaji")) bebanGaji += Number(entry.debitAmount || 0);
-    if (entry.debitAccount.includes("Beban Pakan")) bebanPakan += Number(entry.debitAmount || 0);
-    if (entry.debitAccount.includes("Beban Penyusutan")) bebanPenyusutan += Number(entry.debitAmount || 0);
-    if (entry.debitAccount.includes("Beban Lain-lain")) bebanLain += Number(entry.debitAmount || 0);
+    if (entry.creditAccount.includes("Pendapatan Penjualan"))
+      pendapatanPenjualan += Number(entry.creditAmount || 0);
+    if (entry.creditAccount.includes("Keuntungan Nilai Wajar"))
+      keuntunganNilaiWajar += Number(entry.creditAmount || 0);
+    if (entry.creditAccount.includes("Pendapatan Lain-lain"))
+      pendapatanLain += Number(entry.creditAmount || 0);
+    if (entry.debitAccount.includes("Harga Pokok Penjualan"))
+      hpp += Number(entry.debitAmount || 0);
+    if (entry.debitAccount.includes("Beban Gaji"))
+      bebanGaji += Number(entry.debitAmount || 0);
+    if (entry.debitAccount.includes("Beban Pakan"))
+      bebanPakan += Number(entry.debitAmount || 0);
+    if (entry.debitAccount.includes("Beban Penyusutan"))
+      bebanPenyusutan += Number(entry.debitAmount || 0);
+    if (entry.debitAccount.includes("Beban Lain-lain"))
+      bebanLain += Number(entry.debitAmount || 0);
   });
 
   const kas = balances["1-1100 Kas"] || 0;
@@ -249,17 +273,27 @@ function calculateWbsSummary(journalEntries, biologicalAssets) {
   const persediaanPakan = balances["1-2100 Persediaan Pakan"] || 0;
   const asetBiologis = balances["1-3000 Aset Biologis"] || 0;
   const asetTetap = balances["1-4100 Aset Tetap - Kandang"] || 0;
-  const akumulasiPenyusutan = Math.abs(balances["1-4200 Akumulasi Penyusutan"] || 0);
+  const akumulasiPenyusutan = Math.abs(
+    balances["1-4200 Akumulasi Penyusutan"] || 0,
+  );
 
   const wbsaTotalAsetLancar = kas + bank + persediaanPakan;
-  const wbsaTotalAsetTidakLancar = asetBiologis + (asetTetap - akumulasiPenyusutan);
+  const wbsaTotalAsetTidakLancar =
+    asetBiologis + (asetTetap - akumulasiPenyusutan);
   const wbsaTotalAset = wbsaTotalAsetLancar + wbsaTotalAsetTidakLancar;
 
   const hutangUsaha = Math.abs(balances["2-1000 Hutang Usaha"] || 0);
   const modalDisetor = Math.abs(balances["3-1000 Modal Disetor"] || 0);
 
   const wplLabaBersih =
-    pendapatanPenjualan + keuntunganNilaiWajar + pendapatanLain - hpp - bebanGaji - bebanPakan - bebanPenyusutan - bebanLain;
+    pendapatanPenjualan +
+    keuntunganNilaiWajar +
+    pendapatanLain -
+    hpp -
+    bebanGaji -
+    bebanPakan -
+    bebanPenyusutan -
+    bebanLain;
 
   const wbslTotalLiabilitas = hutangUsaha;
   const wbslTotalEkuitas = modalDisetor + wplLabaBersih;
@@ -318,7 +352,10 @@ async function ensureMonthlyBackup({ force = false } = {}) {
     biologicalAssets: state.biologicalAssets,
     journalEntries: state.journalEntries,
     accountBalances: state.accountBalances,
-    wbsSummary: calculateWbsSummary(state.journalEntries, state.biologicalAssets),
+    wbsSummary: calculateWbsSummary(
+      state.journalEntries,
+      state.biologicalAssets,
+    ),
   };
 
   await getPool().query(
@@ -337,20 +374,31 @@ async function getState() {
   const [journalRows] = await pool.query(
     "SELECT id, entry_date, description, debit_account, debit_asset_id, debit_amount, credit_account, credit_asset_id, credit_amount, created_by, updated_by, created_at FROM journal_entries ORDER BY entry_date ASC, created_at ASC, id ASC",
   );
+  const [documentRows] = await pool.query(
+    "SELECT id, journal_entry_id, document_side, file_name, file_data, file_type, uploaded_at, uploaded_by FROM journal_documents ORDER BY uploaded_at DESC, id ASC",
+  );
 
   const biologicalAssets = assetRows.map(normalizeAsset);
   const journalEntries = journalRows.map(normalizeJournalEntry);
+  const journalDocuments = documentRows.map(normalizeJournalDocument);
 
   return {
     biologicalAssets,
     journalEntries,
+    journalDocuments,
     accountBalances: computeAccountBalances(journalEntries),
     fairValuePerKg: await getFairValuePerKg(),
   };
 }
 
-async function replaceState(biologicalAssets, journalEntries, fairValuePerKg) {
+async function replaceState(
+  biologicalAssets,
+  journalEntries,
+  fairValuePerKg,
+  journalDocuments = [],
+) {
   await withTransaction(async (connection) => {
+    await connection.query("DELETE FROM journal_documents");
     await connection.query("DELETE FROM journal_entries");
     await connection.query("DELETE FROM biological_assets");
 
@@ -365,6 +413,13 @@ async function replaceState(biologicalAssets, journalEntries, fairValuePerKg) {
       await connection.query(
         "INSERT INTO journal_entries (id, entry_date, description, debit_account, debit_asset_id, debit_amount, credit_account, credit_asset_id, credit_amount, created_by, updated_by) VALUES ?",
         [toJournalValues(journalEntries)],
+      );
+    }
+
+    if (journalDocuments.length > 0) {
+      await connection.query(
+        "INSERT INTO journal_documents (id, journal_entry_id, document_side, file_name, file_data, file_type, uploaded_by) VALUES ?",
+        [toJournalDocumentValues(journalDocuments)],
       );
     }
 
@@ -429,7 +484,15 @@ app.put("/api/state", async (req, res, next) => {
       ? req.body.journalEntries
       : [];
     const fairValuePerKg = Number(req.body?.fairValuePerKg);
-    const state = await replaceState(biologicalAssets, journalEntries, fairValuePerKg);
+    const journalDocuments = Array.isArray(req.body?.journalDocuments)
+      ? req.body.journalDocuments
+      : [];
+    const state = await replaceState(
+      biologicalAssets,
+      journalEntries,
+      fairValuePerKg,
+      journalDocuments,
+    );
     await ensureMonthlyBackup();
     res.json(state);
   } catch (error) {
@@ -488,12 +551,14 @@ app.post("/api/assets", async (req, res, next) => {
     const tagId = String(req.body?.tagId || "").trim();
     const type = req.body?.type;
     const age = Number(req.body?.age || 0);
-    const ageUpdatedAt = req.body?.ageUpdatedAt || new Date().toISOString().split("T")[0];
+    const ageUpdatedAt =
+      req.body?.ageUpdatedAt || new Date().toISOString().split("T")[0];
     const weight = Number(req.body?.weight || 0);
     const purchasePrice = Number(req.body?.purchasePrice || 0);
     const fairValuePerKg = await getFairValuePerKg();
     const fairValue = Number(req.body?.fairValue || weight * fairValuePerKg);
-    const lastUpdated = req.body?.lastUpdated || new Date().toISOString().split("T")[0];
+    const lastUpdated =
+      req.body?.lastUpdated || new Date().toISOString().split("T")[0];
     const createdBy = req.body?.createdBy || "system";
 
     if (!tagId) {
@@ -516,7 +581,20 @@ app.post("/api/assets", async (req, res, next) => {
     await withTransaction(async (connection) => {
       await connection.query(
         "INSERT INTO biological_assets (id, tag_id, type, age, age_updated_at, weight, fair_value, purchase_price, profit, loss, last_updated, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [id, tagId, type, age, ageUpdatedAt, weight, fairValue, purchasePrice, 0, 0, lastUpdated, createdBy],
+        [
+          id,
+          tagId,
+          type,
+          age,
+          ageUpdatedAt,
+          weight,
+          fairValue,
+          purchasePrice,
+          0,
+          0,
+          lastUpdated,
+          createdBy,
+        ],
       );
       await connection.query(
         "INSERT INTO journal_entries (id, entry_date, description, debit_account, debit_asset_id, debit_amount, credit_account, credit_asset_id, credit_amount, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -796,7 +874,9 @@ app.post("/api/admin-users", async (req, res, next) => {
     const isActive = req.body?.isActive !== false;
 
     if (!username || !fullName) {
-      return res.status(400).json({ message: "Username dan nama lengkap wajib diisi" });
+      return res
+        .status(400)
+        .json({ message: "Username dan nama lengkap wajib diisi" });
     }
 
     const passwordHash = hashPassword("admin123");
@@ -880,6 +960,11 @@ app.post("/api/journal-documents", async (req, res, next) => {
   try {
     const id = String(req.body?.id || Date.now());
     const journalEntryId = String(req.body?.journalEntryId || "");
+    const documentSide = ["debit", "credit", "general"].includes(
+      req.body?.documentSide,
+    )
+      ? req.body.documentSide
+      : "general";
     const fileName = String(req.body?.fileName || "").trim();
     const fileData = req.body?.fileData || "";
     const fileType = req.body?.fileType || "";
@@ -889,12 +974,12 @@ app.post("/api/journal-documents", async (req, res, next) => {
     }
 
     await getPool().query(
-      "INSERT INTO journal_documents (id, journal_entry_id, file_name, file_data, file_type, uploaded_at) VALUES (?, ?, ?, ?, ?, NOW())",
-      [id, journalEntryId, fileName, fileData, fileType],
+      "INSERT INTO journal_documents (id, journal_entry_id, document_side, file_name, file_data, file_type, uploaded_at) VALUES (?, ?, ?, ?, ?, ?, NOW())",
+      [id, journalEntryId, documentSide, fileName, fileData, fileType],
     );
 
     const [newRow] = await getPool().query(
-      "SELECT id, journal_entry_id, file_name, file_data, file_type, uploaded_at, uploaded_by FROM journal_documents WHERE id = ?",
+      "SELECT id, journal_entry_id, document_side, file_name, file_data, file_type, uploaded_at, uploaded_by FROM journal_documents WHERE id = ?",
       [id],
     );
 
@@ -908,7 +993,7 @@ app.get("/api/journal-documents/:journalEntryId", async (req, res, next) => {
   try {
     const journalEntryId = String(req.params.journalEntryId || "");
     const [rows] = await getPool().query(
-      "SELECT id, journal_entry_id, file_name, file_data, file_type, uploaded_at, uploaded_by FROM journal_documents WHERE journal_entry_id = ? ORDER BY uploaded_at DESC",
+      "SELECT id, journal_entry_id, document_side, file_name, file_data, file_type, uploaded_at, uploaded_by FROM journal_documents WHERE journal_entry_id = ? ORDER BY uploaded_at DESC",
       [journalEntryId],
     );
 
@@ -952,7 +1037,9 @@ app.post("/api/chart-of-accounts", async (req, res, next) => {
     const isActive = req.body?.isActive !== false;
 
     if (!code || !name) {
-      return res.status(400).json({ message: "Kode dan nama akun wajib diisi" });
+      return res
+        .status(400)
+        .json({ message: "Kode dan nama akun wajib diisi" });
     }
 
     await getPool().query(
@@ -982,10 +1069,16 @@ app.delete("/api/chart-of-accounts/:code", async (req, res, next) => {
     );
 
     if (usageRows[0].count > 0) {
-      return res.status(400).json({ message: "Tidak bisa hapus akun yang sudah digunakan dalam jurnal" });
+      return res
+        .status(400)
+        .json({
+          message: "Tidak bisa hapus akun yang sudah digunakan dalam jurnal",
+        });
     }
 
-    await getPool().query("DELETE FROM chart_of_accounts WHERE code = ?", [code]);
+    await getPool().query("DELETE FROM chart_of_accounts WHERE code = ?", [
+      code,
+    ]);
     res.json({ success: true });
   } catch (error) {
     next(error);
@@ -1004,6 +1097,7 @@ async function bootstrap() {
     defaultAssets,
     defaultFairValuePerKg,
     defaultJournalEntries,
+    defaultJournalDocuments,
     defaultAdminUser,
   });
 

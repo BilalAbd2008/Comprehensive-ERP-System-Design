@@ -99,6 +99,7 @@ async function runMigrations() {
     CREATE TABLE IF NOT EXISTS journal_documents (
       id VARCHAR(64) PRIMARY KEY,
       journal_entry_id VARCHAR(64) NOT NULL,
+      document_side ENUM('debit', 'credit', 'general') NOT NULL DEFAULT 'general',
       file_name VARCHAR(255) NOT NULL,
       file_data LONGBLOB NOT NULL,
       file_type VARCHAR(50) NULL,
@@ -193,6 +194,17 @@ async function runMigrations() {
       "ALTER TABLE journal_entries ADD COLUMN updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP",
     );
   }
+
+  const [documentSideColumns] = await pool.query(
+    "SELECT COUNT(*) AS total FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'journal_documents' AND COLUMN_NAME = 'document_side'",
+    [databaseName],
+  );
+
+  if (documentSideColumns[0].total === 0) {
+    await pool.query(
+      "ALTER TABLE journal_documents ADD COLUMN document_side ENUM('debit', 'credit', 'general') NOT NULL DEFAULT 'general' AFTER journal_entry_id",
+    );
+  }
 }
 
 async function seedDefaults(
@@ -200,6 +212,7 @@ async function seedDefaults(
   defaultAdminUser,
   defaultFairValuePerKg,
   defaultJournalEntries = [],
+  defaultJournalDocuments = [],
 ) {
   const { createHash } = await import("crypto");
 
@@ -288,7 +301,7 @@ async function seedDefaults(
       ["5-5000", "Beban Lain-lain", null, "expense", true],
       ["5-6000", "Beban Penyusutan", null, "expense", true],
     ];
-    
+
     for (const [code, name, parentCode, category, isActive] of defaultCOA) {
       await pool.query(
         "INSERT INTO chart_of_accounts (code, name, parent_code, category, is_active) VALUES (?, ?, ?, ?, ?)",
@@ -308,7 +321,7 @@ async function seedDefaults(
   ) {
     for (let i = 0; i < defaultJournalEntries.length; i++) {
       const entry = defaultJournalEntries[i];
-      const id = String(i + 1).padStart(6, "0"); // Generate ID like "000001"
+      const id = String(entry.id || i + 1);
       await pool.query(
         "INSERT INTO journal_entries (id, entry_date, description, debit_account, debit_amount, credit_account, credit_amount, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         [
@@ -320,6 +333,31 @@ async function seedDefaults(
           entry.creditAccount,
           entry.creditAmount,
           entry.createdBy || "system",
+        ],
+      );
+    }
+  }
+
+  // Seed journal documents
+  const [documentRows] = await pool.query(
+    "SELECT COUNT(*) AS total FROM journal_documents",
+  );
+  if (
+    documentRows[0].total === 0 &&
+    Array.isArray(defaultJournalDocuments) &&
+    defaultJournalDocuments.length > 0
+  ) {
+    for (const document of defaultJournalDocuments) {
+      await pool.query(
+        "INSERT INTO journal_documents (id, journal_entry_id, document_side, file_name, file_data, file_type, uploaded_by, uploaded_at) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())",
+        [
+          document.id,
+          document.journalEntryId,
+          document.documentSide || "general",
+          document.fileName,
+          document.fileData,
+          document.fileType || null,
+          document.uploadedBy || "system",
         ],
       );
     }
@@ -342,11 +380,18 @@ export async function initDatabase({
   defaultAdminUser,
   defaultFairValuePerKg = 100000,
   defaultJournalEntries = [],
+  defaultJournalDocuments = [],
 } = {}) {
   await ensureDatabaseExists();
   pool = mysql.createPool(poolConfig(true));
   await runMigrations();
-  await seedDefaults(defaultAssets, defaultAdminUser, defaultFairValuePerKg, defaultJournalEntries);
+  await seedDefaults(
+    defaultAssets,
+    defaultAdminUser,
+    defaultFairValuePerKg,
+    defaultJournalEntries,
+    defaultJournalDocuments,
+  );
   return pool;
 }
 

@@ -55,7 +55,8 @@ export const defaultJournalEntries = [
   {
     id: "1",
     entryDate: "2025-01-15",
-    description: "Pembelian 3 ekor Domba (DOM-001, DOM-002, DOM-003) - Simulasi Awal",
+    description:
+      "Pembelian 3 ekor Domba (DOM-001, DOM-002, DOM-003) - Simulasi Awal",
     debitAccount: "1001",
     debitAmount: 10500000,
     creditAccount: "2001",
@@ -131,6 +132,34 @@ export const defaultJournalEntries = [
     creditAccount: "4002",
     creditAmount: 1000000,
     createdBy: "system",
+  },
+];
+
+export const defaultJournalDocuments = [
+  {
+    id: "DOC-001",
+    journalEntryId: "1",
+    fileName: "invoice-pembelian-domba-2025-01-15.txt",
+    fileData: "SW52b2ljZSBkYXJpIFBha2FucyBEb21iYSBzaW11bGFzaSAyMDI1LTAxLTE1",
+    fileType: "text/plain",
+    uploadedBy: "system",
+  },
+  {
+    id: "DOC-002",
+    journalEntryId: "2",
+    fileName: "invoice-pembelian-kambing-2025-02-10.txt",
+    fileData:
+      "SW52b2ljZSBkYXJpIFBha2FucyBLYW1iaW5nIHNpbXVsYXNpIDIwMjUtMDItMTA=",
+    fileType: "text/plain",
+    uploadedBy: "system",
+  },
+  {
+    id: "DOC-003",
+    journalEntryId: "3",
+    fileName: "nota-pakan-2025-01-20.txt",
+    fileData: "Tm90YSBiZWJhbiBwYWthbiB0ZXJuYWsgc2ltdWxhc2kgMjAyNS0wMS0yMA==",
+    fileType: "text/plain",
+    uploadedBy: "system",
   },
 ];
 

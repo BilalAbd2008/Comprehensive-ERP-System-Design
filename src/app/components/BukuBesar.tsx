@@ -1,11 +1,80 @@
 import { useState, useMemo } from "react";
 import { useData } from "../context/DataContext";
+import type { ChartOfAccount, JournalDocument } from "../context/DataContext";
 import { ChevronDown, Download } from "lucide-react";
 
+function categoryToKelompok(cat?: ChartOfAccount["category"]): string {
+  if (!cat) return "—";
+  const map: Record<ChartOfAccount["category"], string> = {
+    asset: "Aset",
+    liability: "Liabilitas",
+    equity: "Ekuitas",
+    revenue: "Pendapatan",
+    expense: "Beban",
+  };
+  return map[cat];
+}
+
+function resolveCoaMeta(
+  code: string,
+  parsedNameFromJournal: string,
+  coaByCode: Map<string, ChartOfAccount>,
+): { namaAkun: string; kelompok: string; keteranganSubAkun: string } {
+  const coa = coaByCode.get(code);
+  const namaAkun =
+    (coa?.name && coa.name.trim()) ||
+    parsedNameFromJournal.trim() ||
+    code;
+  const kelompok = categoryToKelompok(coa?.category);
+  let keteranganSubAkun = "";
+  if (coa?.parentCode) {
+    const parent = coaByCode.get(coa.parentCode);
+    const parentLabel = parent
+      ? `${parent.name} (${coa.parentCode})`
+      : coa.parentCode;
+    keteranganSubAkun = `Sub-akun dari ${parentLabel}`;
+  }
+  return { namaAkun, kelompok, keteranganSubAkun };
+}
+
+function parseAccount(account: string) {
+  const [code = "", ...nameParts] = account.split(" ");
+  return {
+    code,
+    name: nameParts.join(" ").trim() || code,
+  };
+}
+
+/** Angka untuk ekspor (format Indonesia, 2 desimal) */
+function formatAmountExport(value: number): string {
+  return new Intl.NumberFormat("id-ID", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value);
+}
+
+function sideLabel(side?: JournalDocument["documentSide"]) {
+  if (side === "debit") return "Debit";
+  if (side === "credit") return "Kredit";
+  return "Umum";
+}
+
+function documentLabel(doc: JournalDocument) {
+  return `${sideLabel(doc.documentSide)}: ${doc.fileName}`;
+}
+
+function downloadDocument(doc: JournalDocument) {
+  const link = document.createElement("a");
+  link.href = doc.fileData;
+  link.download = doc.fileName;
+  link.click();
+}
+
 export default function BukuBesar() {
-  const { journalEntries, exportGeneralLedgerCSV, chartOfAccounts } = useData();
+  const { journalEntries, chartOfAccounts, getJournalDocuments } = useData();
   const [selectedAccount, setSelectedAccount] = useState<string | null>(null);
   const [downloadFormat, setDownloadFormat] = useState<'csv' | 'excel'>('csv');
+  const [previewDocument, setPreviewDocument] = useState<JournalDocument | null>(null);
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat("id-ID", {
@@ -15,6 +84,37 @@ export default function BukuBesar() {
     }).format(value);
   };
 
+  const coaByCode = useMemo(() => {
+    const m = new Map<string, ChartOfAccount>();
+    chartOfAccounts.forEach((a) => m.set(a.code, a));
+    return m;
+  }, [chartOfAccounts]);
+
+  const isSelfOrDescendant = (candidateCode: string, parentCode: string): boolean => {
+    if (candidateCode === parentCode) return true;
+    let current = coaByCode.get(candidateCode);
+    while (current?.parentCode) {
+      if (current.parentCode === parentCode) return true;
+      current = coaByCode.get(current.parentCode);
+    }
+    return false;
+  };
+
+  const getAncestorCodes = (code: string) => {
+    const codes = [code];
+    let current = coaByCode.get(code);
+    while (current?.parentCode) {
+      codes.push(current.parentCode);
+      current = coaByCode.get(current.parentCode);
+    }
+    return codes;
+  };
+
+  const accountLabel = (code: string, fallbackName?: string) => {
+    const coa = coaByCode.get(code);
+    return `${code} ${coa?.name || fallbackName || code}`;
+  };
+
   // Extract unique accounts and calculate running balance
   const accountsData = useMemo(() => {
     const accounts: Record<
@@ -22,9 +122,15 @@ export default function BukuBesar() {
       {
         code: string;
         name: string;
+        namaAkun: string;
+        kelompok: string;
+        keteranganSubAkun: string;
         transactions: Array<{
           date: string;
           description: string;
+          entryId: string;
+          sourceAccount: string;
+          documents: JournalDocument[];
           debit: number;
           credit: number;
           balance: number;
@@ -34,55 +140,64 @@ export default function BukuBesar() {
       }
     > = {};
 
-    // First pass: collect all accounts
+    // First pass: collect accounts and their parent accounts.
     journalEntries.forEach((entry) => {
-      const debitCode = entry.debitAccount.split(" ")[0];
-      const debitName = entry.debitAccount.slice(
-        entry.debitAccount.indexOf(" ") + 1,
-      );
-      const creditCode = entry.creditAccount.split(" ")[0];
-      const creditName = entry.creditAccount.slice(
-        entry.creditAccount.indexOf(" ") + 1,
+      const debit = parseAccount(entry.debitAccount);
+      const credit = parseAccount(entry.creditAccount);
+      const relatedCodes = Array.from(
+        new Set([
+          ...getAncestorCodes(debit.code),
+          ...getAncestorCodes(credit.code),
+        ]),
       );
 
-      if (!accounts[entry.debitAccount]) {
-        accounts[entry.debitAccount] = {
-          code: debitCode,
-          name: debitName,
+      relatedCodes.forEach((code) => {
+        if (accounts[code]) return;
+        accounts[code] = {
+          code,
+          name: coaByCode.get(code)?.name || (code === debit.code ? debit.name : credit.name),
+          namaAkun: "",
+          kelompok: "",
+          keteranganSubAkun: "",
           transactions: [],
           totalDebit: 0,
           totalCredit: 0,
         };
-      }
-      if (!accounts[entry.creditAccount]) {
-        accounts[entry.creditAccount] = {
-          code: creditCode,
-          name: creditName,
-          transactions: [],
-          totalDebit: 0,
-          totalCredit: 0,
-        };
-      }
+      });
     });
 
     // Second pass: add transactions with running balance
-    Object.keys(accounts).forEach((account) => {
+    Object.keys(accounts).forEach((accountCode) => {
+      const account = accounts[accountCode];
       let balance = 0;
       const transactions: Array<any> = [];
 
       const relevantEntries = journalEntries
-        .filter(
-          (e) => e.debitAccount === account || e.creditAccount === account,
-        )
+        .filter((entry) => {
+          const debitCode = parseAccount(entry.debitAccount).code;
+          const creditCode = parseAccount(entry.creditAccount).code;
+          return (
+            isSelfOrDescendant(debitCode, account.code) ||
+            isSelfOrDescendant(creditCode, account.code)
+          );
+        })
         .sort((a, b) => a.date.localeCompare(b.date));
 
       relevantEntries.forEach((entry) => {
-        const debit = entry.debitAccount === account ? entry.debitAmount : 0;
-        const credit = entry.creditAccount === account ? entry.creditAmount : 0;
+        const debitAccount = parseAccount(entry.debitAccount);
+        const creditAccount = parseAccount(entry.creditAccount);
+        const debitBelongs = isSelfOrDescendant(debitAccount.code, account.code);
+        const creditBelongs = isSelfOrDescendant(creditAccount.code, account.code);
+        const debit = debitBelongs ? entry.debitAmount : 0;
+        const credit = creditBelongs ? entry.creditAmount : 0;
+        const sourceAccounts = [
+          debitBelongs ? `Debit: ${accountLabel(debitAccount.code, debitAccount.name)}` : "",
+          creditBelongs ? `Kredit: ${accountLabel(creditAccount.code, creditAccount.name)}` : "",
+        ].filter(Boolean);
 
         // Determine balance direction based on account type (1xxx/5xxx = debit balance, 2/3/4xxx = credit balance)
         const isAssetOrExpense =
-          account.charAt(0) === "1" || account.charAt(0) === "5";
+          account.code.charAt(0) === "1" || account.code.charAt(0) === "5";
         if (isAssetOrExpense) {
           balance += debit - credit;
         } else {
@@ -92,77 +207,244 @@ export default function BukuBesar() {
         transactions.push({
           date: entry.date,
           description: entry.description,
+          entryId: entry.id,
+          sourceAccount: sourceAccounts.join(" / "),
+          documents: getJournalDocuments(entry.id),
           debit,
           credit,
           balance,
         });
 
-        accounts[account].totalDebit += debit;
-        accounts[account].totalCredit += credit;
+        account.totalDebit += debit;
+        account.totalCredit += credit;
       });
 
-      accounts[account].transactions = transactions;
+      account.transactions = transactions;
+    });
+
+    Object.keys(accounts).forEach((key) => {
+      const acc = accounts[key];
+      const meta = resolveCoaMeta(acc.code, acc.name, coaByCode);
+      acc.namaAkun = meta.namaAkun;
+      acc.kelompok = meta.kelompok;
+      acc.keteranganSubAkun = meta.keteranganSubAkun;
     });
 
     return accounts;
-  }, [journalEntries]);
+  }, [journalEntries, coaByCode]);
 
   const accountList = Object.entries(accountsData).sort(([a], [b]) =>
     a.localeCompare(b),
   );
 
+  const cell = (v: string | number) =>
+    `"${String(v).replace(/"/g, '""')}"`;
+
   const exportCSV = () => {
-    let csv = "Buku Besar Laporan\n";
-    csv += `Tanggal Export: ${new Date().toLocaleDateString('id-ID')}\n\n`;
+    let csv = "\uFEFF";
+    csv += "Buku Besar (General Ledger)\n";
+    csv += `Diekspor: ${new Date().toLocaleString("id-ID")}\n`;
+    csv +=
+      "Setiap baris transaksi memuat nama akun resmi dari Daftar Akun; kolom sub-akun terisi jika akun punya induk di COA.\n";
 
-    accountList.forEach(([accountCode, account]) => {
-      csv += `\n"${account.code} - ${account.name}"\n`;
-      csv += `"Tanggal","Deskripsi","Debit","Kredit","Saldo"\n`;
+    const headers = [
+      "No. COA",
+      "Keterangan (sub-akun / induk)",
+      "Nama akun",
+      "Kelompok",
+      "Tanggal",
+      "No. Referensi",
+      "Sumber",
+      "Akun sumber",
+      "Deskripsi",
+      "Dokumen Pendukung",
+      "Debit",
+      "Kredit",
+      "Saldo berjalan",
+    ];
 
-      account.transactions.forEach(trans => {
-        csv += `"${trans.date}","${trans.description}","${trans.debit}","${trans.credit}","${trans.balance}"\n`;
+    accountList.forEach(([, account]) => {
+      const finalBalance =
+        account.transactions.length > 0
+          ? account.transactions[account.transactions.length - 1].balance
+          : 0;
+
+      csv += `\n\n`;
+      csv += `${cell(`AKUN: ${account.code} — ${account.namaAkun}`)}\n`;
+      if (account.keteranganSubAkun) {
+        csv += `${cell(account.keteranganSubAkun)}\n`;
+      }
+      csv += `${headers.map((h) => cell(h)).join(",")}\n`;
+
+      account.transactions.forEach((trans) => {
+        csv += [
+          cell(account.code),
+          cell(account.keteranganSubAkun || "—"),
+          cell(account.namaAkun),
+          cell(account.kelompok),
+          cell(trans.date),
+          cell(`JU/${trans.entryId}`),
+          cell("Jurnal Umum"),
+          cell(trans.sourceAccount || "—"),
+          cell(trans.description),
+          cell(trans.documents.map(documentLabel).join("; ") || "—"),
+          cell(formatAmountExport(trans.debit)),
+          cell(formatAmountExport(trans.credit)),
+          cell(formatAmountExport(trans.balance)),
+        ].join(",") + "\n";
       });
 
-      csv += `"TOTAL","${account.name}","${account.totalDebit}","${account.totalCredit}",""\n`;
+      csv += [
+        cell(account.code),
+        cell(""),
+        cell(account.namaAkun),
+        cell(account.kelompok),
+        cell(""),
+        cell(""),
+        cell(""),
+        cell(""),
+        cell("JUMLAH PER AKUN"),
+        cell(formatAmountExport(account.totalDebit)),
+        cell(formatAmountExport(account.totalCredit)),
+        cell(formatAmountExport(finalBalance)),
+      ].join(",") + "\n";
     });
 
-    // Add summary
     csv += `\n\nRINGKASAN AKUN\n`;
-    csv += `"Kode","Nama Akun","Total Debit","Total Kredit","Saldo"\n`;
-    accountList.forEach(([accountCode, account]) => {
-      const finalBalance = account.transactions.length > 0
-        ? account.transactions[account.transactions.length - 1].balance
-        : 0;
-      csv += `"${account.code}","${account.name}","${account.totalDebit}","${account.totalCredit}","${finalBalance}"\n`;
+    csv += [
+      cell("Kode"),
+      cell("Keterangan sub-akun"),
+      cell("Nama akun"),
+      cell("Kelompok"),
+      cell("Total Debit"),
+      cell("Total Kredit"),
+      cell("Saldo akhir"),
+    ].join(",") + "\n";
+
+    accountList.forEach(([, account]) => {
+      const finalBalance =
+        account.transactions.length > 0
+          ? account.transactions[account.transactions.length - 1].balance
+          : 0;
+      csv += [
+        cell(account.code),
+        cell(account.keteranganSubAkun || "—"),
+        cell(account.namaAkun),
+        cell(account.kelompok),
+        cell(formatAmountExport(account.totalDebit)),
+        cell(formatAmountExport(account.totalCredit)),
+        cell(formatAmountExport(finalBalance)),
+      ].join(",") + "\n";
     });
 
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
-    link.download = `buku-besar-${new Date().toISOString().split('T')[0]}.csv`;
+    link.download = `buku-besar-${new Date().toISOString().split("T")[0]}.csv`;
     link.click();
   };
 
   const exportExcelSimple = () => {
-    // Simple Excel-like CSV format (TSV for better compatibility)
-    let tsv = "Buku Besar Laporan\n";
-    tsv += `Tanggal Export\t${new Date().toLocaleDateString('id-ID')}\n\n`;
+    const sep = "\t";
+    let tsv = "\uFEFF";
+    tsv += "Buku Besar (General Ledger)\n";
+    tsv += `Diekspor\t${new Date().toLocaleString("id-ID")}\n`;
 
-    accountList.forEach(([accountCode, account]) => {
-      tsv += `\n${account.code} - ${account.name}\n`;
-      tsv += `Tanggal\tDeskripsi\tDebit\tKredit\tSaldo\n`;
+    const headers = [
+      "No. COA",
+      "Keterangan (sub-akun / induk)",
+      "Nama akun",
+      "Kelompok",
+      "Tanggal",
+      "No. Referensi",
+      "Sumber",
+      "Akun sumber",
+      "Deskripsi",
+      "Dokumen Pendukung",
+      "Debit",
+      "Kredit",
+      "Saldo berjalan",
+    ];
 
-      account.transactions.forEach(trans => {
-        tsv += `${trans.date}\t${trans.description}\t${trans.debit}\t${trans.credit}\t${trans.balance}\n`;
+    accountList.forEach(([, account]) => {
+      const finalBalance =
+        account.transactions.length > 0
+          ? account.transactions[account.transactions.length - 1].balance
+          : 0;
+
+      tsv += `\n\nAKUN: ${account.code} — ${account.namaAkun}\n`;
+      if (account.keteranganSubAkun) {
+        tsv += `${account.keteranganSubAkun}\n`;
+      }
+      tsv += `${headers.join(sep)}\n`;
+
+      account.transactions.forEach((trans) => {
+        tsv += [
+          account.code,
+          account.keteranganSubAkun || "—",
+          account.namaAkun,
+          account.kelompok,
+          trans.date,
+          `JU/${trans.entryId}`,
+          "Jurnal Umum",
+          trans.sourceAccount || "—",
+          trans.description.replace(/\t/g, " "),
+          trans.documents.map(documentLabel).join("; ") || "—",
+          formatAmountExport(trans.debit),
+          formatAmountExport(trans.credit),
+          formatAmountExport(trans.balance),
+        ].join(sep) + "\n";
       });
 
-      tsv += `TOTAL\t${account.name}\t${account.totalDebit}\t${account.totalCredit}\t\n`;
+      tsv += [
+        account.code,
+        "",
+        account.namaAkun,
+        account.kelompok,
+        "",
+        "",
+        "",
+        "",
+        "JUMLAH PER AKUN",
+        formatAmountExport(account.totalDebit),
+        formatAmountExport(account.totalCredit),
+        formatAmountExport(finalBalance),
+      ].join(sep) + "\n";
     });
 
-    const blob = new Blob([tsv], { type: 'application/vnd.ms-excel;charset=utf-8;' });
-    const link = document.createElement('a');
+    tsv += `\n\nRINGKASAN AKUN\n`;
+    tsv += [
+      "Kode",
+      "Keterangan sub-akun",
+      "Nama akun",
+      "Kelompok",
+      "Total Debit",
+      "Total Kredit",
+      "Saldo akhir",
+    ].join(sep) + "\n";
+
+    accountList.forEach(([, account]) => {
+      const finalBalance =
+        account.transactions.length > 0
+          ? account.transactions[account.transactions.length - 1].balance
+          : 0;
+      tsv += [
+        account.code,
+        account.keteranganSubAkun || "—",
+        account.namaAkun,
+        account.kelompok,
+        formatAmountExport(account.totalDebit),
+        formatAmountExport(account.totalCredit),
+        formatAmountExport(finalBalance),
+      ].join(sep) + "\n";
+    });
+
+    const blob = new Blob([tsv], {
+      type: "application/vnd.ms-excel;charset=utf-8;",
+    });
+    const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
-    link.download = `buku-besar-${new Date().toISOString().split('T')[0]}.xls`;
+    link.download = `buku-besar-${new Date().toISOString().split("T")[0]}.xls`;
     link.click();
   };
 
@@ -238,7 +520,15 @@ export default function BukuBesar() {
                     className="text-sm font-medium"
                     style={{ color: "#1B4332" }}
                   >
-                    [{account.code}] {account.name}
+                    [{account.code}] {account.namaAkun}
+                  </div>
+                  {account.keteranganSubAkun ? (
+                    <div className="text-xs mt-1" style={{ color: "#6C757D" }}>
+                      {account.keteranganSubAkun}
+                    </div>
+                  ) : null}
+                  <div className="text-xs mt-0.5" style={{ color: "#6C757D" }}>
+                    Kelompok: {account.kelompok}
                   </div>
                 </div>
                 <div className="flex items-center gap-6 text-sm">
@@ -293,6 +583,18 @@ export default function BukuBesar() {
                           Transaksi
                         </th>
                         <th
+                          className="px-6 py-3 text-left text-xs font-semibold"
+                          style={{ color: "#495057" }}
+                        >
+                          Akun Sumber
+                        </th>
+                        <th
+                          className="px-6 py-3 text-left text-xs font-semibold"
+                          style={{ color: "#495057" }}
+                        >
+                          Dokumen
+                        </th>
+                        <th
                           className="px-6 py-3 text-right text-xs font-semibold"
                           style={{ color: "#495057" }}
                         >
@@ -332,6 +634,35 @@ export default function BukuBesar() {
                             {trans.description}
                           </td>
                           <td
+                            className="px-6 py-3 text-xs"
+                            style={{ color: "#495057" }}
+                          >
+                            {trans.sourceAccount || "-"}
+                          </td>
+                          <td
+                            className="px-6 py-3 text-xs"
+                            style={{ color: "#495057" }}
+                          >
+                            {trans.documents.length > 0 ? (
+                              <div className="flex flex-wrap gap-1">
+                                {trans.documents.map((doc) => (
+                                  <button
+                                    key={doc.id}
+                                    type="button"
+                                    onClick={() => setPreviewDocument(doc)}
+                                    className="px-2 py-1 rounded"
+                                    style={{ backgroundColor: "#E7F5E9", color: "#1B4332" }}
+                                    title={doc.fileName}
+                                  >
+                                    {sideLabel(doc.documentSide)}
+                                  </button>
+                                ))}
+                              </div>
+                            ) : (
+                              "-"
+                            )}
+                          </td>
+                          <td
                             className="px-6 py-3 text-sm text-right"
                             style={{ color: trans.debit > 0 ? "#212529" : "#6C757D" }}
                           >
@@ -359,7 +690,7 @@ export default function BukuBesar() {
                       ))}
                       <tr style={{ backgroundColor: "#F8F9FA" }}>
                         <td
-                          colSpan={2}
+                          colSpan={4}
                           className="px-6 py-3 text-sm font-semibold"
                           style={{ color: "#1B4332" }}
                         >
@@ -404,7 +735,9 @@ export default function BukuBesar() {
               <thead>
                 <tr style={{ backgroundColor: "#1B4332", color: "white" }}>
                   <th className="px-4 py-2 text-left">Kode</th>
+                  <th className="px-4 py-2 text-left">Sub-akun</th>
                   <th className="px-4 py-2 text-left">Nama Akun</th>
+                  <th className="px-4 py-2 text-left">Kelompok</th>
                   <th className="px-4 py-2 text-right">Total Debit</th>
                   <th className="px-4 py-2 text-right">Total Kredit</th>
                   <th className="px-4 py-2 text-right">Saldo</th>
@@ -420,8 +753,14 @@ export default function BukuBesar() {
                       <td className="px-4 py-2" style={{ color: "#495057" }}>
                         {account.code}
                       </td>
+                      <td className="px-4 py-2 text-xs" style={{ color: "#6C757D" }}>
+                        {account.keteranganSubAkun || "—"}
+                      </td>
                       <td className="px-4 py-2" style={{ color: "#212529" }}>
-                        {account.name}
+                        {account.namaAkun}
+                      </td>
+                      <td className="px-4 py-2 text-xs" style={{ color: "#495057" }}>
+                        {account.kelompok}
                       </td>
                       <td className="px-4 py-2 text-right" style={{ color: "#212529" }}>
                         {formatCurrency(account.totalDebit)}
@@ -440,6 +779,55 @@ export default function BukuBesar() {
                 })}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {previewDocument && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6">
+          <div className="bg-white rounded-lg border w-full max-w-4xl max-h-[90vh] overflow-hidden" style={{ borderColor: "#DEE2E6" }}>
+            <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: "#DEE2E6" }}>
+              <div>
+                <h2 className="text-base" style={{ color: "#1B4332" }}>{previewDocument.fileName}</h2>
+                <p className="text-xs" style={{ color: "#6C757D" }}>
+                  Dokumen {sideLabel(previewDocument.documentSide)}
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => downloadDocument(previewDocument)}
+                  className="px-3 py-2 rounded text-white text-sm"
+                  style={{ backgroundColor: "#1B4332" }}
+                >
+                  Download
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPreviewDocument(null)}
+                  className="px-3 py-2 rounded text-sm"
+                  style={{ backgroundColor: "#E9ECEF", color: "#495057" }}
+                >
+                  Tutup
+                </button>
+              </div>
+            </div>
+            <div className="p-5 overflow-auto" style={{ maxHeight: "72vh" }}>
+              {previewDocument.fileType.startsWith("image/") ? (
+                <img
+                  src={previewDocument.fileData}
+                  alt={previewDocument.fileName}
+                  className="max-w-full mx-auto"
+                />
+              ) : (
+                <iframe
+                  src={previewDocument.fileData}
+                  title={previewDocument.fileName}
+                  className="w-full h-[65vh] border rounded"
+                  style={{ borderColor: "#DEE2E6" }}
+                />
+              )}
+            </div>
           </div>
         </div>
       )}
