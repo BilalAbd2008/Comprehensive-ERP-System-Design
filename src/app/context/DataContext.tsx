@@ -6,6 +6,8 @@ import {
   ReactNode,
 } from "react";
 
+// ============ INTERFACES ============
+
 export interface BiologicalAsset {
   id: string;
   tagId: string;
@@ -14,7 +16,31 @@ export interface BiologicalAsset {
   ageUpdatedAt?: string;
   weight: number;
   fairValue: number;
+  purchasePrice?: number;  // Harga beli
+  profit?: number;  // Untung
+  loss?: number;  // Rugi
   lastUpdated: string;
+  updatedBy?: string;  // Admin yang update
+}
+
+export interface ChartOfAccount {
+  code: string;
+  name: string;
+  parentCode?: string;  // Parent untuk akun anak
+  category: "asset" | "liability" | "equity" | "revenue" | "expense";
+  isActive: boolean;
+  createdAt?: string;
+  createdBy?: string;
+}
+
+export interface JournalDocument {
+  id: string;
+  journalEntryId: string;
+  fileName: string;
+  fileData: string;  // Base64 encoded
+  fileType: string;
+  uploadedAt: string;
+  uploadedBy?: string;
 }
 
 export interface JournalEntry {
@@ -27,6 +53,10 @@ export interface JournalEntry {
   creditAccount: string;
   creditAssetId?: string;
   creditAmount: number;
+  documentId?: string;  // Reference ke JournalDocument
+  createdAt?: string;
+  createdBy?: string;
+  updatedBy?: string;
 }
 
 export interface AccountBalance {
@@ -35,24 +65,73 @@ export interface AccountBalance {
   debit: number;
   credit: number;
   category: "asset" | "liability" | "equity" | "revenue" | "expense";
+  balance?: number;
+  parentCode?: string;
+}
+
+export interface AdminUser {
+  id: string;
+  username: string;
+  fullName: string;
+  email?: string;
+  role: "admin" | "manager" | "operator";
+  isActive: boolean;
+  createdAt: string;
+  createdBy?: string;
 }
 
 interface DataContextType {
+  // Auth
   isAuthenticated: boolean;
+  currentUser?: AdminUser;
   login: (username: string, password: string) => Promise<boolean>;
   logout: () => void;
+  
+  // Biological Assets
   biologicalAssets: BiologicalAsset[];
   updateAssetWeight: (id: string, newWeight: number) => Promise<void>;
   addBiologicalAsset: (
     asset: Omit<BiologicalAsset, "id" | "lastUpdated">,
   ) => Promise<void>;
+  updateBiologicalAsset: (id: string, asset: Partial<BiologicalAsset>) => Promise<void>;
   deleteBiologicalAsset: (id: string) => Promise<void>;
+  
+  // Journal Entries
   journalEntries: JournalEntry[];
   addJournalEntry: (entry: Omit<JournalEntry, "id">) => Promise<void>;
   updateJournalEntry: (id: string, entry: Omit<JournalEntry, "id">) => Promise<void>;
+  deleteJournalEntry: (id: string) => Promise<void>;
+  
+  // Journal Documents
+  addJournalDocument: (doc: Omit<JournalDocument, "id">) => Promise<void>;
+  getJournalDocuments: (journalEntryId: string) => JournalDocument[];
+  deleteJournalDocument: (docId: string) => Promise<void>;
+  
+  // Chart of Accounts
+  chartOfAccounts: ChartOfAccount[];
+  addChartOfAccount: (account: ChartOfAccount) => Promise<void>;
+  updateChartOfAccount: (code: string, account: Partial<ChartOfAccount>) => Promise<void>;
+  deleteChartOfAccount: (code: string) => Promise<void>;
+  getAccountsByParent: (parentCode?: string) => ChartOfAccount[];
+  
+  // Account Balances
   accountBalances: AccountBalance[];
+  
+  // Fair Value
   fairValuePerKg: number;
   setFairValuePerKg: (nextValue: number) => Promise<void>;
+  
+  // Admin Management
+  admins: AdminUser[];
+  addAdmin: (admin: Omit<AdminUser, "id" | "createdAt">) => Promise<void>;
+  updateAdmin: (id: string, admin: Partial<AdminUser>) => Promise<void>;
+  deleteAdmin: (id: string) => Promise<void>;
+  
+  // Export
+  exportGeneralLedgerCSV: () => string;
+  exportGeneralLedgerExcel: () => Uint8Array;
+  
+  // Data Management
   loadSimulationData: () => Promise<void>;
   resetData: () => Promise<void>;
   resetToZero: () => Promise<void>;
@@ -63,7 +142,45 @@ const DataContext = createContext<DataContextType | undefined>(undefined);
 const API_BASE_URL =
   import.meta.env.VITE_API_URL || "http://localhost:3001/api";
 const AUTH_STORAGE_KEY = "hers-farm-authenticated";
+const CURRENT_USER_KEY = "hers-farm-current-user";
 const FAIR_VALUE_PER_KG_STORAGE_KEY = "hers-farm-fair-value-per-kg";
+const STORAGE_KEY_ASSETS = "hers-farm-assets";
+const STORAGE_KEY_ENTRIES = "hers-farm-entries";
+const STORAGE_KEY_DOCUMENTS = "hers-farm-documents";
+const STORAGE_KEY_COA = "hers-farm-coa";
+const STORAGE_KEY_ADMINS = "hers-farm-admins";
+
+const defaultChartOfAccounts: ChartOfAccount[] = [
+  // Assets
+  { code: "1-1100", name: "Kas", category: "asset", isActive: true },
+  { code: "1-1200", name: "Bank", category: "asset", isActive: true },
+  { code: "1-12001", name: "Bank BCA", parentCode: "1-1200", category: "asset", isActive: true },
+  { code: "1-12002", name: "Bank Mandiri", parentCode: "1-1200", category: "asset", isActive: true },
+  { code: "1-2100", name: "Persediaan Pakan", category: "asset", isActive: true },
+  { code: "1-3000", name: "Aset Biologis", category: "asset", isActive: true },
+  { code: "1-4100", name: "Aset Tetap - Kandang", category: "asset", isActive: true },
+  { code: "1-4200", name: "Akumulasi Penyusutan", category: "asset", isActive: true },
+  
+  // Liabilities
+  { code: "2-1000", name: "Hutang Usaha", category: "liability", isActive: true },
+  
+  // Equity
+  { code: "3-1000", name: "Modal Disetor", category: "equity", isActive: true },
+  { code: "3-2000", name: "Laba Ditahan", category: "equity", isActive: true },
+  
+  // Revenue
+  { code: "4-1000", name: "Pendapatan Penjualan", category: "revenue", isActive: true },
+  { code: "4-2000", name: "Keuntungan Nilai Wajar", category: "revenue", isActive: true },
+  { code: "4-3000", name: "Pendapatan Lain-lain", category: "revenue", isActive: true },
+  
+  // Expenses
+  { code: "5-1000", name: "Beban Gaji", category: "expense", isActive: true },
+  { code: "5-2000", name: "Beban Pakan", category: "expense", isActive: true },
+  { code: "5-3000", name: "Harga Pokok Penjualan", category: "expense", isActive: true },
+  { code: "5-4000", name: "Kerugian Nilai Wajar", category: "expense", isActive: true },
+  { code: "5-5000", name: "Beban Lain-lain", category: "expense", isActive: true },
+  { code: "5-6000", name: "Beban Penyusutan", category: "expense", isActive: true },
+];
 
 const initialAssets: BiologicalAsset[] = [
   {
@@ -73,6 +190,9 @@ const initialAssets: BiologicalAsset[] = [
     age: 8,
     weight: 35,
     fairValue: 3500000,
+    purchasePrice: 3500000,
+    profit: 0,
+    loss: 0,
     lastUpdated: "2025-01-15",
   },
   {
@@ -82,6 +202,9 @@ const initialAssets: BiologicalAsset[] = [
     age: 6,
     weight: 32,
     fairValue: 3200000,
+    purchasePrice: 3200000,
+    profit: 0,
+    loss: 0,
     lastUpdated: "2025-01-20",
   },
   {
@@ -91,83 +214,78 @@ const initialAssets: BiologicalAsset[] = [
     age: 12,
     weight: 28,
     fairValue: 2800000,
+    purchasePrice: 2800000,
+    profit: 0,
+    loss: 0,
     lastUpdated: "2025-02-10",
-  },
-  {
-    id: "4",
-    tagId: "DOM-003",
-    type: "Domba",
-    age: 10,
-    weight: 38,
-    fairValue: 3800000,
-    lastUpdated: "2025-02-15",
-  },
-  {
-    id: "5",
-    tagId: "KMB-002",
-    type: "Kambing",
-    age: 9,
-    weight: 26,
-    fairValue: 2600000,
-    lastUpdated: "2025-03-01",
   },
 ];
 
 const initialJournalEntries: JournalEntry[] = [];
+const initialAdmins: AdminUser[] = [
+  {
+    id: "1",
+    username: "admin_hers",
+    fullName: "Admin Utama",
+    email: "admin@hers.com",
+    role: "admin",
+    isActive: true,
+    createdAt: "2025-01-01",
+  },
+];
 
-function computeAccountBalances(entries: JournalEntry[]): AccountBalance[] {
+function computeAccountBalances(entries: JournalEntry[], coa: ChartOfAccount[]): AccountBalance[] {
   const balances = new Map<string, AccountBalance>();
 
-  const getCategory = (account: string): AccountBalance["category"] => {
-    const code = account.split(" ")[0] || account;
-    switch (code.charAt(0)) {
-      case "1":
-        return "asset";
-      case "2":
-        return "liability";
-      case "3":
-        return "equity";
-      case "4":
-        return "revenue";
-      default:
-        return "expense";
-    }
-  };
-
-  const ensureBalance = (account: string) => {
+  const ensureBalance = (account: string, coaEntry?: ChartOfAccount) => {
     if (!balances.has(account)) {
       balances.set(account, {
         code: account.split(" ")[0] || account,
         name: account,
         debit: 0,
         credit: 0,
-        category: getCategory(account),
+        balance: 0,
+        category: coaEntry?.category || "expense",
+        parentCode: coaEntry?.parentCode,
       });
     }
     return balances.get(account)!;
   };
 
   entries.forEach((entry) => {
-    ensureBalance(entry.debitAccount).debit += Number(entry.debitAmount || 0);
-    ensureBalance(entry.creditAccount).credit += Number(
-      entry.creditAmount || 0,
-    );
+    const debitCOA = coa.find(a => a.code === entry.debitAccount.split(" ")[0]);
+    const creditCOA = coa.find(a => a.code === entry.creditAccount.split(" ")[0]);
+    
+    ensureBalance(entry.debitAccount, debitCOA).debit += Number(entry.debitAmount || 0);
+    ensureBalance(entry.creditAccount, creditCOA).credit += Number(entry.creditAmount || 0);
   });
 
-  return Array.from(balances.values()).sort((a, b) =>
-    a.code.localeCompare(b.code),
-  );
+  return Array.from(balances.values())
+    .map(balance => ({
+      ...balance,
+      balance: balance.debit - balance.credit,
+    }))
+    .sort((a, b) => a.code.localeCompare(b.code));
 }
 
 export function DataProvider({ children }: { children: ReactNode }) {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [currentUser, setCurrentUser] = useState<AdminUser | undefined>();
   const [biologicalAssets, setBiologicalAssets] =
     useState<BiologicalAsset[]>(initialAssets);
   const [journalEntries, setJournalEntries] = useState<JournalEntry[]>(
     initialJournalEntries,
   );
+  const [journalDocuments, setJournalDocuments] = useState<JournalDocument[]>([]);
+  const [chartOfAccounts, setChartOfAccounts] = useState<ChartOfAccount[]>(defaultChartOfAccounts);
   const [accountBalances, setAccountBalances] = useState<AccountBalance[]>([]);
   const [fairValuePerKg, setFairValuePerKgState] = useState<number>(100000);
+  const [admins, setAdmins] = useState<AdminUser[]>(initialAdmins);
+
+  // Calculate balances whenever entries or COA changes
+  useEffect(() => {
+    setAccountBalances(computeAccountBalances(journalEntries, chartOfAccounts));
+  }, [journalEntries, chartOfAccounts]);
 
   const syncAgeByMonth = (assets: BiologicalAsset[]) => {
     const today = new Date();
@@ -210,7 +328,6 @@ export function DataProvider({ children }: { children: ReactNode }) {
   ) => {
     setBiologicalAssets(nextAssets);
     setJournalEntries(nextEntries);
-    setAccountBalances(computeAccountBalances(nextEntries));
   };
 
   const persistState = async (
@@ -218,6 +335,19 @@ export function DataProvider({ children }: { children: ReactNode }) {
     nextEntries: JournalEntry[],
     nextFairValuePerKg: number,
   ) => {
+    // Simpan ke localStorage terlebih dahulu (untuk fallback jika backend down)
+    try {
+      localStorage.setItem(STORAGE_KEY_ASSETS, JSON.stringify(nextAssets));
+      localStorage.setItem(STORAGE_KEY_ENTRIES, JSON.stringify(nextEntries));
+      localStorage.setItem(STORAGE_KEY_DOCUMENTS, JSON.stringify(journalDocuments));
+      localStorage.setItem(STORAGE_KEY_COA, JSON.stringify(chartOfAccounts));
+      localStorage.setItem(STORAGE_KEY_ADMINS, JSON.stringify(admins));
+      localStorage.setItem(FAIR_VALUE_PER_KG_STORAGE_KEY, String(nextFairValuePerKg));
+    } catch (error) {
+      console.error("Gagal menyimpan data ke localStorage", error);
+    }
+
+    // Coba simpan ke backend juga
     try {
       await fetch(`${API_BASE_URL}/state`, {
         method: "PUT",
@@ -228,10 +358,13 @@ export function DataProvider({ children }: { children: ReactNode }) {
           biologicalAssets: nextAssets,
           journalEntries: nextEntries,
           fairValuePerKg: nextFairValuePerKg,
+          chartOfAccounts,
+          journalDocuments,
+          admins,
         }),
       });
     } catch (error) {
-      console.error("Gagal menyimpan data ke backend", error);
+      console.warn("Gagal menyimpan data ke backend, menggunakan localStorage", error);
     }
   };
 
@@ -269,22 +402,85 @@ export function DataProvider({ children }: { children: ReactNode }) {
       setFairValuePerKgState(resolvedFairValuePerKg);
       localStorage.setItem(FAIR_VALUE_PER_KG_STORAGE_KEY, String(resolvedFairValuePerKg));
 
+      // Load COA and admin users dari endpoints terpisah
+      try {
+        const [coaRes, adminsRes] = await Promise.all([
+          fetch(`${API_BASE_URL}/chart-of-accounts`),
+          fetch(`${API_BASE_URL}/admin-users`),
+        ]);
+
+        if (coaRes.ok) {
+          const coaData = await coaRes.json();
+          if (Array.isArray(coaData.chartOfAccounts) && coaData.chartOfAccounts.length > 0) {
+            setChartOfAccounts(coaData.chartOfAccounts);
+            localStorage.setItem(STORAGE_KEY_COA, JSON.stringify(coaData.chartOfAccounts));
+          }
+        }
+
+        if (adminsRes.ok) {
+          const adminsData = await adminsRes.json();
+          if (Array.isArray(adminsData.admins) && adminsData.admins.length > 0) {
+            setAdmins(adminsData.admins);
+            localStorage.setItem(STORAGE_KEY_ADMINS, JSON.stringify(adminsData.admins));
+          }
+        }
+      } catch (endpointError) {
+        console.warn("Gagal load dari endpoint terpisah, menggunakan data dari /api/state", endpointError);
+        if (data.chartOfAccounts && Array.isArray(data.chartOfAccounts)) {
+          setChartOfAccounts(data.chartOfAccounts);
+        }
+        if (data.admins && Array.isArray(data.admins)) {
+          setAdmins(data.admins);
+        }
+      }
+
+      if (data.journalDocuments && Array.isArray(data.journalDocuments)) {
+        setJournalDocuments(data.journalDocuments);
+      }
+
+      // Simpan ke localStorage juga
+      localStorage.setItem(STORAGE_KEY_ASSETS, JSON.stringify(syncedAssets));
+      localStorage.setItem(STORAGE_KEY_ENTRIES, JSON.stringify(data.journalEntries || initialJournalEntries));
+      localStorage.setItem(STORAGE_KEY_COA, JSON.stringify(chartOfAccounts || defaultChartOfAccounts));
+      localStorage.setItem(STORAGE_KEY_DOCUMENTS, JSON.stringify(data.journalDocuments || []));
+      localStorage.setItem(STORAGE_KEY_ADMINS, JSON.stringify(admins || initialAdmins));
+
       if (changed) {
         void persistState(syncedAssets, data.journalEntries || initialJournalEntries, resolvedFairValuePerKg);
       }
     } catch (error) {
-      console.warn(
-        "Menggunakan data lokal karena backend belum tersedia",
-        error,
-      );
-      const storedFairValuePerKg = Number(localStorage.getItem(FAIR_VALUE_PER_KG_STORAGE_KEY) || 100000);
-      setFairValuePerKgState(
-        Number.isFinite(storedFairValuePerKg) && storedFairValuePerKg > 0
-          ? storedFairValuePerKg
-          : 100000,
-      );
-      const { syncedAssets } = syncAgeByMonth(initialAssets);
-      applyState(syncedAssets, initialJournalEntries);
+      console.warn("Backend tidak tersedia, menggunakan data dari localStorage...", error);
+      
+      // Coba load dari localStorage
+      try {
+        const storedAssets = localStorage.getItem(STORAGE_KEY_ASSETS);
+        const storedEntries = localStorage.getItem(STORAGE_KEY_ENTRIES);
+        const storedDocuments = localStorage.getItem(STORAGE_KEY_DOCUMENTS);
+        const storedCOA = localStorage.getItem(STORAGE_KEY_COA);
+        const storedAdmins = localStorage.getItem(STORAGE_KEY_ADMINS);
+        const storedFairValuePerKg = Number(localStorage.getItem(FAIR_VALUE_PER_KG_STORAGE_KEY) || 100000);
+
+        const assets = storedAssets ? JSON.parse(storedAssets) : initialAssets;
+        const entries = storedEntries ? JSON.parse(storedEntries) : initialJournalEntries;
+        const documents = storedDocuments ? JSON.parse(storedDocuments) : [];
+        const coa = storedCOA ? JSON.parse(storedCOA) : defaultChartOfAccounts;
+        const admins_list = storedAdmins ? JSON.parse(storedAdmins) : initialAdmins;
+
+        const { syncedAssets } = syncAgeByMonth(assets);
+        
+        applyState(syncedAssets, entries);
+        setFairValuePerKgState(storedFairValuePerKg);
+        setJournalDocuments(documents);
+        setChartOfAccounts(coa);
+        setAdmins(admins_list);
+
+        console.log("✅ Data dimuat dari localStorage (offline mode)");
+      } catch (parseError) {
+        console.warn("Gagal load dari localStorage, menggunakan initial data", parseError);
+        const { syncedAssets } = syncAgeByMonth(initialAssets);
+        applyState(syncedAssets, initialJournalEntries);
+        setFairValuePerKgState(100000);
+      }
     }
   };
 
@@ -292,6 +488,14 @@ export function DataProvider({ children }: { children: ReactNode }) {
     const storedAuth = localStorage.getItem(AUTH_STORAGE_KEY);
     if (storedAuth === "true") {
       setIsAuthenticated(true);
+      const storedUser = localStorage.getItem(CURRENT_USER_KEY);
+      if (storedUser) {
+        try {
+          setCurrentUser(JSON.parse(storedUser));
+        } catch (e) {
+          // fallback
+        }
+      }
     }
 
     void loadStateFromBackend();
@@ -311,17 +515,25 @@ export function DataProvider({ children }: { children: ReactNode }) {
       });
 
       if (response.ok) {
+        const data = await response.json();
+        const user: AdminUser = data.user || { id: "1", username, fullName: username, role: "admin", isActive: true, createdAt: new Date().toISOString() };
         setIsAuthenticated(true);
+        setCurrentUser(user);
         localStorage.setItem(AUTH_STORAGE_KEY, "true");
+        localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(user));
         return true;
       }
     } catch (error) {
       console.warn("Backend login gagal, memakai validasi lokal", error);
     }
 
-    if (username === "admin_hers" && password === "admin123") {
+    // Local fallback
+    const adminUser = admins.find(a => a.username === username);
+    if (adminUser && password === "admin123") {
       setIsAuthenticated(true);
+      setCurrentUser(adminUser);
       localStorage.setItem(AUTH_STORAGE_KEY, "true");
+      localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(adminUser));
       return true;
     }
     return false;
@@ -329,7 +541,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   const logout = () => {
     setIsAuthenticated(false);
+    setCurrentUser(undefined);
     localStorage.removeItem(AUTH_STORAGE_KEY);
+    localStorage.removeItem(CURRENT_USER_KEY);
   };
 
   const updateAssetWeight = async (id: string, newWeight: number) => {
@@ -343,6 +557,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
             weight: newWeight,
             fairValue: newWeight * fairValuePerKg,
             lastUpdated: new Date().toISOString().split("T")[0],
+            updatedBy: currentUser?.username,
           }
         : a,
     );
@@ -362,7 +577,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
               debitAccount:
                 difference > 0
                   ? "1-3000 Aset Biologis"
-                  : "5-2000 Kerugian Nilai Wajar",
+                  : "5-4000 Kerugian Nilai Wajar",
               debitAssetId: id,
               debitAmount: Math.abs(difference),
               creditAccount:
@@ -371,6 +586,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
                   : "1-3000 Aset Biologis",
               creditAssetId: difference < 0 ? id : undefined,
               creditAmount: Math.abs(difference),
+              createdBy: currentUser?.username,
             },
           ]
         : journalEntries;
@@ -381,15 +597,21 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const addJournalEntry = async (entry: Omit<JournalEntry, "id">) => {
     const nextEntries = [
       ...journalEntries,
-      { ...entry, id: String(Date.now()) },
+      { ...entry, id: String(Date.now()), createdBy: currentUser?.username },
     ];
     commitState(biologicalAssets, nextEntries, fairValuePerKg);
   };
 
   const updateJournalEntry = async (id: string, entry: Omit<JournalEntry, "id">) => {
     const nextEntries = journalEntries.map((journalEntry) =>
-      journalEntry.id === id ? { ...entry, id } : journalEntry,
+      journalEntry.id === id ? { ...entry, id, updatedBy: currentUser?.username } : journalEntry,
     );
+    commitState(biologicalAssets, nextEntries, fairValuePerKg);
+  };
+
+  const deleteJournalEntry = async (id: string) => {
+    const nextEntries = journalEntries.filter(e => e.id !== id);
+    setJournalDocuments(docs => docs.filter(d => d.journalEntryId !== id));
     commitState(biologicalAssets, nextEntries, fairValuePerKg);
   };
 
@@ -401,6 +623,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       id: String(Date.now()),
       ageUpdatedAt: new Date().toISOString().split("T")[0],
       lastUpdated: new Date().toISOString().split("T")[0],
+      updatedBy: currentUser?.username,
     };
 
     const newEntry: JournalEntry = {
@@ -412,9 +635,24 @@ export function DataProvider({ children }: { children: ReactNode }) {
       debitAmount: asset.fairValue,
       creditAccount: "1-1100 Kas",
       creditAmount: asset.fairValue,
+      createdBy: currentUser?.username,
     };
 
     commitState([...biologicalAssets, newAsset], [...journalEntries, newEntry], fairValuePerKg);
+  };
+
+  const updateBiologicalAsset = async (id: string, asset: Partial<BiologicalAsset>) => {
+    const updatedAssets = biologicalAssets.map((a) =>
+      a.id === id
+        ? {
+            ...a,
+            ...asset,
+            lastUpdated: new Date().toISOString().split("T")[0],
+            updatedBy: currentUser?.username,
+          }
+        : a,
+    );
+    commitState(updatedAssets, journalEntries, fairValuePerKg);
   };
 
   const deleteBiologicalAsset = async (id: string) => {
@@ -430,6 +668,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       creditAccount: "1-3000 Aset Biologis",
       creditAssetId: id,
       creditAmount: asset.fairValue,
+      createdBy: currentUser?.username,
     };
 
     commitState(
@@ -448,7 +687,137 @@ export function DataProvider({ children }: { children: ReactNode }) {
     commitState(updatedAssets, journalEntries, nextValue);
   };
 
+  // Journal Documents
+  const addJournalDocument = async (doc: Omit<JournalDocument, "id">) => {
+    const newDoc: JournalDocument = {
+      ...doc,
+      id: String(Date.now()),
+      uploadedBy: currentUser?.username,
+    };
+    const updatedDocs = [...journalDocuments, newDoc];
+    setJournalDocuments(updatedDocs);
+    // Simpan ke localStorage
+    localStorage.setItem(STORAGE_KEY_DOCUMENTS, JSON.stringify(updatedDocs));
+  };
+
+  const getJournalDocuments = (journalEntryId: string): JournalDocument[] => {
+    return journalDocuments.filter(d => d.journalEntryId === journalEntryId);
+  };
+
+  const deleteJournalDocument = async (docId: string) => {
+    const updatedDocs = journalDocuments.filter(d => d.id !== docId);
+    setJournalDocuments(updatedDocs);
+    // Simpan ke localStorage
+    localStorage.setItem(STORAGE_KEY_DOCUMENTS, JSON.stringify(updatedDocs));
+  };
+
+  // Chart of Accounts
+  const addChartOfAccount = async (account: ChartOfAccount) => {
+    const existing = chartOfAccounts.find(a => a.code === account.code);
+    if (existing) {
+      alert("Akun dengan kode ini sudah ada");
+      return;
+    }
+    const newAccount: ChartOfAccount = {
+      ...account,
+      createdAt: new Date().toISOString(),
+      createdBy: currentUser?.username,
+    };
+    const updatedCOA = [...chartOfAccounts, newAccount];
+    setChartOfAccounts(updatedCOA);
+    // Simpan ke localStorage
+    localStorage.setItem(STORAGE_KEY_COA, JSON.stringify(updatedCOA));
+  };
+
+  const updateChartOfAccount = async (code: string, account: Partial<ChartOfAccount>) => {
+    const updatedCOA = chartOfAccounts.map(a => a.code === code ? { ...a, ...account } : a);
+    setChartOfAccounts(updatedCOA);
+    // Simpan ke localStorage
+    localStorage.setItem(STORAGE_KEY_COA, JSON.stringify(updatedCOA));
+  };
+
+  const deleteChartOfAccount = async (code: string) => {
+    // Check if used in journal entries
+    const isUsed = journalEntries.some(j =>
+      j.debitAccount.includes(code) || j.creditAccount.includes(code)
+    );
+    if (isUsed) {
+      alert("Tidak bisa hapus akun yang sudah digunakan dalam jurnal");
+      return;
+    }
+    const updatedCOA = chartOfAccounts.filter(a => a.code !== code);
+    setChartOfAccounts(updatedCOA);
+    // Simpan ke localStorage
+    localStorage.setItem(STORAGE_KEY_COA, JSON.stringify(updatedCOA));
+  };
+
+  const getAccountsByParent = (parentCode?: string): ChartOfAccount[] => {
+    return chartOfAccounts.filter(a => a.parentCode === parentCode);
+  };
+
+  // Admin Management
+  const addAdmin = async (admin: Omit<AdminUser, "id" | "createdAt">) => {
+    const newAdmin: AdminUser = {
+      ...admin,
+      id: String(Date.now()),
+      createdAt: new Date().toISOString(),
+      createdBy: currentUser?.username,
+    };
+    const updatedAdmins = [...admins, newAdmin];
+    setAdmins(updatedAdmins);
+    // Simpan ke localStorage
+    localStorage.setItem(STORAGE_KEY_ADMINS, JSON.stringify(updatedAdmins));
+  };
+
+  const updateAdmin = async (id: string, admin: Partial<AdminUser>) => {
+    const updatedAdmins = admins.map(a => a.id === id ? { ...a, ...admin } : a);
+    setAdmins(updatedAdmins);
+    // Simpan ke localStorage
+    localStorage.setItem(STORAGE_KEY_ADMINS, JSON.stringify(updatedAdmins));
+  };
+
+  const deleteAdmin = async (id: string) => {
+    if (id === currentUser?.id) {
+      alert("Tidak bisa menghapus admin yang sedang login");
+      return;
+    }
+    const updatedAdmins = admins.filter(a => a.id !== id);
+    setAdmins(updatedAdmins);
+    // Simpan ke localStorage
+    localStorage.setItem(STORAGE_KEY_ADMINS, JSON.stringify(updatedAdmins));
+  };
+
+  // Export Functions
+  const exportGeneralLedgerCSV = (): string => {
+    let csv = "Kode,Nama,Debit,Kredit,Saldo\n";
+    accountBalances.forEach(balance => {
+      const code = balance.code || "";
+      const name = balance.name || "";
+      const debit = balance.debit || 0;
+      const credit = balance.credit || 0;
+      const saldo = balance.balance || 0;
+      csv += `"${code}","${name}",${debit},${credit},${saldo}\n`;
+    });
+    
+    csv += "\n\nDetail Transaksi,Tanggal,Deskripsi,Akun Debit,Debit,Akun Kredit,Kredit\n";
+    journalEntries.forEach(entry => {
+      csv += `"${entry.date}","${entry.description}","${entry.debitAccount}",${entry.debitAmount},"${entry.creditAccount}",${entry.creditAmount}\n`;
+    });
+    
+    return csv;
+  };
+
+  const exportGeneralLedgerExcel = (): Uint8Array => {
+    // Simple Excel generation (would need a library like xlsx in production)
+    // For now, returning CSV as UTF-8 bytes
+    const csv = exportGeneralLedgerCSV();
+    const encoder = new TextEncoder();
+    return encoder.encode(csv);
+  };
+
+  // Data Management
   const loadSimulationData = async () => {
+    // Using existing simulation data from old context
     const simulationAssets: BiologicalAsset[] = [
       {
         id: "1",
@@ -457,6 +826,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
         age: 8,
         weight: 38,
         fairValue: 3800000,
+        purchasePrice: 3500000,
+        profit: 300000,
+        loss: 0,
         lastUpdated: "2025-12-31",
       },
       {
@@ -466,498 +838,14 @@ export function DataProvider({ children }: { children: ReactNode }) {
         age: 7,
         weight: 36,
         fairValue: 3600000,
-        lastUpdated: "2025-12-31",
-      },
-      {
-        id: "3",
-        tagId: "KMB-001",
-        type: "Kambing",
-        age: 13,
-        weight: 30,
-        fairValue: 3000000,
-        lastUpdated: "2025-12-31",
-      },
-      {
-        id: "4",
-        tagId: "DOM-003",
-        type: "Domba",
-        age: 11,
-        weight: 42,
-        fairValue: 4200000,
-        lastUpdated: "2025-12-31",
-      },
-      {
-        id: "5",
-        tagId: "KMB-002",
-        type: "Kambing",
-        age: 10,
-        weight: 29,
-        fairValue: 2900000,
-        lastUpdated: "2025-12-31",
-      },
-      {
-        id: "6",
-        tagId: "DOM-004",
-        type: "Domba",
-        age: 4,
-        weight: 25,
-        fairValue: 2500000,
-        lastUpdated: "2025-12-31",
-      },
-      {
-        id: "7",
-        tagId: "DOM-005",
-        type: "Domba",
-        age: 5,
-        weight: 28,
-        fairValue: 2800000,
-        lastUpdated: "2025-12-31",
-      },
-      {
-        id: "8",
-        tagId: "KMB-003",
-        type: "Kambing",
-        age: 6,
-        weight: 24,
-        fairValue: 2400000,
+        purchasePrice: 3200000,
+        profit: 400000,
+        loss: 0,
         lastUpdated: "2025-12-31",
       },
     ];
 
-    const simulationEntries: JournalEntry[] = [
-      // Modal Awal
-      {
-        id: "1",
-        date: "2025-01-01",
-        description: "Modal Awal Disetor",
-        debitAccount: "1-1100 Kas",
-        debitAmount: 150000000,
-        creditAccount: "3-1000 Modal Disetor",
-        creditAmount: 150000000,
-      },
-      {
-        id: "2",
-        date: "2025-01-02",
-        description: "Transfer Kas ke Bank",
-        debitAccount: "1-1200 Bank",
-        debitAmount: 50000000,
-        creditAccount: "1-1100 Kas",
-        creditAmount: 50000000,
-      },
-
-      // Pembelian Aset Tetap
-      {
-        id: "3",
-        date: "2025-01-03",
-        description: "Pembelian Kandang dan Bangunan",
-        debitAccount: "1-4100 Aset Tetap - Kandang",
-        debitAmount: 25000000,
-        creditAccount: "1-1100 Kas",
-        creditAmount: 25000000,
-      },
-
-      // Pembelian Aset Biologis Awal
-      {
-        id: "4",
-        date: "2025-01-05",
-        description: "Pembelian Domba DOM-001",
-        debitAccount: "1-3000 Aset Biologis",
-        debitAssetId: "1",
-        debitAmount: 3500000,
-        creditAccount: "1-1100 Kas",
-        creditAmount: 3500000,
-      },
-      {
-        id: "5",
-        date: "2025-01-10",
-        description: "Pembelian Domba DOM-002",
-        debitAccount: "1-3000 Aset Biologis",
-        debitAssetId: "2",
-        debitAmount: 3200000,
-        creditAccount: "1-1100 Kas",
-        creditAmount: 3200000,
-      },
-      {
-        id: "6",
-        date: "2025-02-05",
-        description: "Pembelian Kambing KMB-001",
-        debitAccount: "1-3000 Aset Biologis",
-        debitAssetId: "3",
-        debitAmount: 2800000,
-        creditAccount: "1-1100 Kas",
-        creditAmount: 2800000,
-      },
-      {
-        id: "7",
-        date: "2025-02-20",
-        description: "Pembelian Domba DOM-003",
-        debitAccount: "1-3000 Aset Biologis",
-        debitAssetId: "4",
-        debitAmount: 3800000,
-        creditAccount: "1-1100 Kas",
-        creditAmount: 3800000,
-      },
-      {
-        id: "8",
-        date: "2025-03-10",
-        description: "Pembelian Kambing KMB-002",
-        debitAccount: "1-3000 Aset Biologis",
-        debitAssetId: "5",
-        debitAmount: 2600000,
-        creditAccount: "1-1100 Kas",
-        creditAmount: 2600000,
-      },
-
-      // Hutang untuk operasional
-      {
-        id: "9",
-        date: "2025-03-15",
-        description: "Hutang Pakan ke Supplier A",
-        debitAccount: "1-2100 Persediaan Pakan",
-        debitAmount: 15000000,
-        creditAccount: "2-1000 Hutang Usaha",
-        creditAmount: 15000000,
-      },
-
-      // OPEX - Pakan (12 bulan) - dikurangi untuk buat rugi
-      {
-        id: "10",
-        date: "2025-01-15",
-        description: "Pembelian Pakan Januari",
-        debitAccount: "1-2100 Persediaan Pakan",
-        debitAmount: 8000000,
-        creditAccount: "1-1100 Kas",
-        creditAmount: 8000000,
-      },
-      {
-        id: "11",
-        date: "2025-01-31",
-        description: "Konsumsi Pakan Januari - Kapitalisasi",
-        debitAccount: "1-3000 Aset Biologis",
-        debitAmount: 6000000,
-        creditAccount: "1-2100 Persediaan Pakan",
-        creditAmount: 6000000,
-      },
-      {
-        id: "12",
-        date: "2025-02-15",
-        description: "Pembelian Pakan Februari",
-        debitAccount: "1-2100 Persediaan Pakan",
-        debitAmount: 8000000,
-        creditAccount: "1-1100 Kas",
-        creditAmount: 8000000,
-      },
-      {
-        id: "13",
-        date: "2025-02-28",
-        description: "Konsumsi Pakan Februari - Kapitalisasi",
-        debitAccount: "1-3000 Aset Biologis",
-        debitAmount: 6500000,
-        creditAccount: "1-2100 Persediaan Pakan",
-        creditAmount: 6500000,
-      },
-      {
-        id: "14",
-        date: "2025-03-15",
-        description: "Pembelian Pakan Maret",
-        debitAccount: "1-2100 Persediaan Pakan",
-        debitAmount: 8000000,
-        creditAccount: "1-1100 Kas",
-        creditAmount: 8000000,
-      },
-      {
-        id: "15",
-        date: "2025-03-31",
-        description: "Konsumsi Pakan Maret - Kapitalisasi",
-        debitAccount: "1-3000 Aset Biologis",
-        debitAmount: 6200000,
-        creditAccount: "1-2100 Persediaan Pakan",
-        creditAmount: 6200000,
-      },
-      {
-        id: "16",
-        date: "2025-04-15",
-        description: "Pembelian Pakan April",
-        debitAccount: "1-2100 Persediaan Pakan",
-        debitAmount: 8000000,
-        creditAccount: "1-1200 Bank",
-        creditAmount: 8000000,
-      },
-      {
-        id: "17",
-        date: "2025-05-15",
-        description: "Pembelian Pakan Mei",
-        debitAccount: "1-2100 Persediaan Pakan",
-        debitAmount: 8000000,
-        creditAccount: "1-1200 Bank",
-        creditAmount: 8000000,
-      },
-      {
-        id: "18",
-        date: "2025-06-15",
-        description: "Pembelian Pakan Juni",
-        debitAccount: "1-2100 Persediaan Pakan",
-        debitAmount: 8000000,
-        creditAccount: "1-1200 Bank",
-        creditAmount: 8000000,
-      },
-
-      // OPEX - Gaji (12 bulan @ 15 juta) - dinaikkan untuk buat rugi
-      {
-        id: "19",
-        date: "2025-01-31",
-        description: "Gaji 3 Karyawan Januari",
-        debitAccount: "5-1000 Beban Gaji",
-        debitAmount: 15000000,
-        creditAccount: "1-1100 Kas",
-        creditAmount: 15000000,
-      },
-      {
-        id: "20",
-        date: "2025-02-28",
-        description: "Gaji 3 Karyawan Februari",
-        debitAccount: "5-1000 Beban Gaji",
-        debitAmount: 15000000,
-        creditAccount: "1-1100 Kas",
-        creditAmount: 15000000,
-      },
-      {
-        id: "21",
-        date: "2025-03-31",
-        description: "Gaji 3 Karyawan Maret",
-        debitAccount: "5-1000 Beban Gaji",
-        debitAmount: 15000000,
-        creditAccount: "1-1100 Kas",
-        creditAmount: 15000000,
-      },
-      {
-        id: "22",
-        date: "2025-04-30",
-        description: "Gaji 3 Karyawan April",
-        debitAccount: "5-1000 Beban Gaji",
-        debitAmount: 15000000,
-        creditAccount: "1-1100 Kas",
-        creditAmount: 15000000,
-      },
-      {
-        id: "23",
-        date: "2025-05-31",
-        description: "Gaji 3 Karyawan Mei",
-        debitAccount: "5-1000 Beban Gaji",
-        debitAmount: 15000000,
-        creditAccount: "1-1200 Bank",
-        creditAmount: 15000000,
-      },
-      {
-        id: "24",
-        date: "2025-06-30",
-        description: "Gaji 3 Karyawan Juni",
-        debitAccount: "5-1000 Beban Gaji",
-        debitAmount: 15000000,
-        creditAccount: "1-1200 Bank",
-        creditAmount: 15000000,
-      },
-      {
-        id: "25",
-        date: "2025-07-31",
-        description: "Gaji 3 Karyawan Juli",
-        debitAccount: "5-1000 Beban Gaji",
-        debitAmount: 15000000,
-        creditAccount: "1-1200 Bank",
-        creditAmount: 15000000,
-      },
-      {
-        id: "26",
-        date: "2025-08-31",
-        description: "Gaji 3 Karyawan Agustus",
-        debitAccount: "5-1000 Beban Gaji",
-        debitAmount: 15000000,
-        creditAccount: "1-1200 Bank",
-        creditAmount: 15000000,
-      },
-      {
-        id: "27",
-        date: "2025-09-30",
-        description: "Gaji 3 Karyawan September",
-        debitAccount: "5-1000 Beban Gaji",
-        debitAmount: 15000000,
-        creditAccount: "1-1100 Kas",
-        creditAmount: 15000000,
-      },
-      {
-        id: "28",
-        date: "2025-10-31",
-        description: "Gaji 3 Karyawan Oktober",
-        debitAccount: "5-1000 Beban Gaji",
-        debitAmount: 15000000,
-        creditAccount: "1-1100 Kas",
-        creditAmount: 15000000,
-      },
-      {
-        id: "29",
-        date: "2025-11-30",
-        description: "Gaji 3 Karyawan November",
-        debitAccount: "5-1000 Beban Gaji",
-        debitAmount: 15000000,
-        creditAccount: "1-1100 Kas",
-        creditAmount: 15000000,
-      },
-      {
-        id: "30",
-        date: "2025-12-31",
-        description: "Gaji 3 Karyawan Desember",
-        debitAccount: "5-1000 Beban Gaji",
-        debitAmount: 15000000,
-        creditAccount: "1-1100 Kas",
-        creditAmount: 15000000,
-      },
-
-      // Penjualan Kurban (rendah)
-      {
-        id: "31",
-        date: "2025-06-15",
-        description: "Penjualan Kurban 3 Domba @ Rp 4.500.000",
-        debitAccount: "1-1100 Kas",
-        debitAmount: 13500000,
-        creditAccount: "4-1000 Pendapatan Penjualan",
-        creditAmount: 13500000,
-      },
-      {
-        id: "32",
-        date: "2025-06-15",
-        description: "HPP Penjualan Kurban",
-        debitAccount: "5-3000 Harga Pokok Penjualan",
-        debitAmount: 11000000,
-        creditAccount: "1-3000 Aset Biologis",
-        creditAmount: 11000000,
-      },
-
-      // Penjualan Aqiqah
-      {
-        id: "33",
-        date: "2025-09-10",
-        description: "Penjualan Aqiqah 2 Domba @ Rp 4.000.000",
-        debitAccount: "1-1100 Kas",
-        debitAmount: 8000000,
-        creditAccount: "4-1000 Pendapatan Penjualan",
-        creditAmount: 8000000,
-      },
-      {
-        id: "34",
-        date: "2025-09-10",
-        description: "HPP Penjualan Aqiqah",
-        debitAccount: "5-3000 Harga Pokok Penjualan",
-        debitAmount: 6500000,
-        creditAccount: "1-3000 Aset Biologis",
-        creditAmount: 6500000,
-      },
-
-      // OIOE - Pendapatan Lain (rendah)
-      {
-        id: "35",
-        date: "2025-08-20",
-        description: "Pendapatan Penjualan Kotoran Ternak",
-        debitAccount: "1-1100 Kas",
-        debitAmount: 1500000,
-        creditAccount: "4-3000 Pendapatan Lain-lain",
-        creditAmount: 1500000,
-      },
-      {
-        id: "36",
-        date: "2025-11-15",
-        description: "Pendapatan Sewa Kandang",
-        debitAccount: "1-1100 Kas",
-        debitAmount: 2000000,
-        creditAccount: "4-3000 Pendapatan Lain-lain",
-        creditAmount: 2000000,
-      },
-
-      // OIOE - Beban Lain (tinggi)
-      {
-        id: "37",
-        date: "2025-04-10",
-        description: "Biaya Pemeliharaan Kandang",
-        debitAccount: "5-5000 Beban Lain-lain",
-        debitAmount: 3500000,
-        creditAccount: "1-1100 Kas",
-        creditAmount: 3500000,
-      },
-      {
-        id: "38",
-        date: "2025-05-15",
-        description: "Biaya Listrik & Air 5 Bulan",
-        debitAccount: "5-5000 Beban Lain-lain",
-        debitAmount: 2500000,
-        creditAccount: "1-1200 Bank",
-        creditAmount: 2500000,
-      },
-      {
-        id: "39",
-        date: "2025-07-20",
-        description: "Biaya Transportasi Pakan",
-        debitAccount: "5-5000 Beban Lain-lain",
-        debitAmount: 1800000,
-        creditAccount: "1-1100 Kas",
-        creditAmount: 1800000,
-      },
-      {
-        id: "40",
-        date: "2025-10-05",
-        description: "Biaya Pengobatan Ternak",
-        debitAccount: "5-5000 Beban Lain-lain",
-        debitAmount: 4000000,
-        creditAccount: "1-1100 Kas",
-        creditAmount: 4000000,
-      },
-      {
-        id: "41",
-        date: "2025-12-10",
-        description: "Biaya Administrasi & Perizinan",
-        debitAccount: "5-5000 Beban Lain-lain",
-        debitAmount: 2200000,
-        creditAccount: "1-1200 Bank",
-        creditAmount: 2200000,
-      },
-
-      // Penyusutan Aset Tetap
-      {
-        id: "42",
-        date: "2025-12-31",
-        description: "Penyusutan Kandang Tahun 2025 (10%)",
-        debitAccount: "5-6000 Beban Penyusutan",
-        debitAmount: 2500000,
-        creditAccount: "1-4200 Akumulasi Penyusutan",
-        creditAmount: 2500000,
-      },
-
-      // Keuntungan Nilai Wajar (kecil, tidak cukup untuk cover rugi)
-      {
-        id: "43",
-        date: "2025-12-31",
-        description: "Penyesuaian Nilai Wajar Aset Biologis",
-        debitAccount: "1-3000 Aset Biologis",
-        debitAmount: 5000000,
-        creditAccount: "4-2000 Keuntungan Nilai Wajar",
-        creditAmount: 5000000,
-      },
-
-      // Pembayaran Hutang
-      {
-        id: "44",
-        date: "2025-06-20",
-        description: "Pembayaran Hutang Usaha Sebagian",
-        debitAccount: "2-1000 Hutang Usaha",
-        debitAmount: 5000000,
-        creditAccount: "1-1200 Bank",
-        creditAmount: 5000000,
-      },
-    ];
-
-    const simulationWithAgeBase = simulationAssets.map((asset) => ({
-      ...asset,
-      ageUpdatedAt: asset.lastUpdated,
-    }));
-    commitState(simulationWithAgeBase, simulationEntries, fairValuePerKg);
+    commitState(simulationAssets, initialJournalEntries, fairValuePerKg);
   };
 
   const resetData = async () => {
@@ -975,6 +863,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
       )
     ) {
       commitState([], [], fairValuePerKg);
+      // Clear localStorage juga
+      localStorage.setItem(STORAGE_KEY_ASSETS, JSON.stringify([]));
+      localStorage.setItem(STORAGE_KEY_ENTRIES, JSON.stringify([]));
+      localStorage.setItem(STORAGE_KEY_DOCUMENTS, JSON.stringify([]));
     }
   };
 
@@ -982,18 +874,35 @@ export function DataProvider({ children }: { children: ReactNode }) {
     <DataContext.Provider
       value={{
         isAuthenticated,
+        currentUser,
         login,
         logout,
         biologicalAssets,
         updateAssetWeight,
         addBiologicalAsset,
+        updateBiologicalAsset,
         deleteBiologicalAsset,
         journalEntries,
         addJournalEntry,
         updateJournalEntry,
+        deleteJournalEntry,
+        addJournalDocument,
+        getJournalDocuments,
+        deleteJournalDocument,
+        chartOfAccounts,
+        addChartOfAccount,
+        updateChartOfAccount,
+        deleteChartOfAccount,
+        getAccountsByParent,
         accountBalances,
         fairValuePerKg,
         setFairValuePerKg,
+        admins,
+        addAdmin,
+        updateAdmin,
+        deleteAdmin,
+        exportGeneralLedgerCSV,
+        exportGeneralLedgerExcel,
         loadSimulationData,
         resetData,
         resetToZero,
@@ -1004,10 +913,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
   );
 }
 
-export function useData() {
+export function useData(): DataContextType {
   const context = useContext(DataContext);
-  if (!context) {
-    throw new Error("useData must be used within DataProvider");
+  if (context === undefined) {
+    throw new Error("useData harus digunakan dalam DataProvider");
   }
   return context;
 }

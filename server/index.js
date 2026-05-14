@@ -88,7 +88,12 @@ function normalizeAsset(row) {
     ageUpdatedAt: row.age_updated_at,
     weight: Number(row.weight),
     fairValue: Number(row.fair_value),
+    purchasePrice: row.purchase_price ? Number(row.purchase_price) : undefined,
+    profit: row.profit ? Number(row.profit) : undefined,
+    loss: row.loss ? Number(row.loss) : undefined,
     lastUpdated: row.last_updated,
+    updatedBy: row.updated_by,
+    createdBy: row.created_by,
   };
 }
 
@@ -103,6 +108,46 @@ function normalizeJournalEntry(row) {
     creditAccount: row.credit_account,
     creditAssetId: row.credit_asset_id ?? undefined,
     creditAmount: Number(row.credit_amount),
+    createdBy: row.created_by,
+    updatedBy: row.updated_by,
+    createdAt: row.created_at,
+  };
+}
+
+function normalizeAdminUser(row) {
+  return {
+    id: String(row.id),
+    username: row.username,
+    fullName: row.full_name,
+    email: row.email,
+    role: row.role,
+    isActive: Boolean(row.is_active),
+    createdAt: row.created_at,
+    createdBy: row.created_by,
+  };
+}
+
+function normalizeJournalDocument(row) {
+  return {
+    id: String(row.id),
+    journalEntryId: String(row.journal_entry_id),
+    fileName: row.file_name,
+    fileData: row.file_data,
+    fileType: row.file_type,
+    uploadedAt: row.uploaded_at,
+    uploadedBy: row.uploaded_by,
+  };
+}
+
+function normalizeChartOfAccount(row) {
+  return {
+    code: row.code,
+    name: row.name,
+    parentCode: row.parent_code,
+    category: row.category,
+    isActive: Boolean(row.is_active),
+    createdAt: row.created_at,
+    createdBy: row.created_by,
   };
 }
 
@@ -115,7 +160,12 @@ function toAssetValues(assets) {
     asset.ageUpdatedAt || asset.lastUpdated,
     Number(asset.weight),
     Number(asset.fairValue),
+    asset.purchasePrice ? Number(asset.purchasePrice) : null,
+    asset.profit ? Number(asset.profit) : 0,
+    asset.loss ? Number(asset.loss) : 0,
     asset.lastUpdated,
+    asset.createdBy || "system",
+    asset.updatedBy || null,
   ]);
 }
 
@@ -147,6 +197,8 @@ function toJournalValues(entries) {
     entry.creditAccount,
     entry.creditAssetId || null,
     Number(entry.creditAmount),
+    entry.createdBy || "system",
+    entry.updatedBy || null,
   ]);
 }
 
@@ -280,10 +332,10 @@ async function ensureMonthlyBackup({ force = false } = {}) {
 async function getState() {
   const pool = getPool();
   const [assetRows] = await pool.query(
-    "SELECT id, tag_id, type, age, age_updated_at, weight, fair_value, last_updated FROM biological_assets ORDER BY created_at ASC, tag_id ASC",
+    "SELECT id, tag_id, type, age, age_updated_at, weight, fair_value, purchase_price, profit, loss, last_updated, created_by, updated_by FROM biological_assets ORDER BY created_at ASC, tag_id ASC",
   );
   const [journalRows] = await pool.query(
-    "SELECT id, entry_date, description, debit_account, debit_asset_id, debit_amount, credit_account, credit_asset_id, credit_amount FROM journal_entries ORDER BY entry_date ASC, created_at ASC, id ASC",
+    "SELECT id, entry_date, description, debit_account, debit_asset_id, debit_amount, credit_account, credit_asset_id, credit_amount, created_by, updated_by, created_at FROM journal_entries ORDER BY entry_date ASC, created_at ASC, id ASC",
   );
 
   const biologicalAssets = assetRows.map(normalizeAsset);
@@ -304,14 +356,14 @@ async function replaceState(biologicalAssets, journalEntries, fairValuePerKg) {
 
     if (biologicalAssets.length > 0) {
       await connection.query(
-        "INSERT INTO biological_assets (id, tag_id, type, age, age_updated_at, weight, fair_value, last_updated) VALUES ?",
+        "INSERT INTO biological_assets (id, tag_id, type, age, age_updated_at, weight, fair_value, purchase_price, profit, loss, last_updated, created_by, updated_by) VALUES ?",
         [toAssetValues(biologicalAssets)],
       );
     }
 
     if (journalEntries.length > 0) {
       await connection.query(
-        "INSERT INTO journal_entries (id, entry_date, description, debit_account, debit_asset_id, debit_amount, credit_account, credit_asset_id, credit_amount) VALUES ?",
+        "INSERT INTO journal_entries (id, entry_date, description, debit_account, debit_asset_id, debit_amount, credit_account, credit_asset_id, credit_amount, created_by, updated_by) VALUES ?",
         [toJournalValues(journalEntries)],
       );
     }
@@ -400,23 +452,31 @@ app.post("/api/auth/login", async (req, res, next) => {
     const username = String(req.body?.username || "").trim();
     const password = String(req.body?.password || "");
 
-    const [rows] = await getPool().query(
-      "SELECT id, username, password_hash, full_name, role FROM users WHERE username = ? LIMIT 1",
+    // Try admin_users table first
+    const [adminRows] = await getPool().query(
+      "SELECT id, username, password_hash, full_name, email, role, is_active FROM admin_users WHERE username = ? AND is_active = true LIMIT 1",
       [username],
     );
 
-    if (!rows.length || rows[0].password_hash !== hashPassword(password)) {
-      return res.status(401).json({ message: "Username atau password salah" });
+    if (adminRows.length > 0) {
+      const admin = adminRows[0];
+      const passwordHash = hashPassword(password);
+      if (admin.password_hash === passwordHash) {
+        return res.json({
+          user: {
+            id: admin.id,
+            username: admin.username,
+            fullName: admin.full_name,
+            email: admin.email,
+            role: admin.role,
+            isActive: Boolean(admin.is_active),
+            createdAt: admin.created_at,
+          },
+        });
+      }
     }
 
-    res.json({
-      user: {
-        id: rows[0].id,
-        username: rows[0].username,
-        fullName: rows[0].full_name,
-        role: rows[0].role,
-      },
-    });
+    return res.status(401).json({ message: "Username atau password salah" });
   } catch (error) {
     next(error);
   }
@@ -430,10 +490,11 @@ app.post("/api/assets", async (req, res, next) => {
     const age = Number(req.body?.age || 0);
     const ageUpdatedAt = req.body?.ageUpdatedAt || new Date().toISOString().split("T")[0];
     const weight = Number(req.body?.weight || 0);
+    const purchasePrice = Number(req.body?.purchasePrice || 0);
     const fairValuePerKg = await getFairValuePerKg();
     const fairValue = Number(req.body?.fairValue || weight * fairValuePerKg);
-    const lastUpdated =
-      req.body?.lastUpdated || new Date().toISOString().split("T")[0];
+    const lastUpdated = req.body?.lastUpdated || new Date().toISOString().split("T")[0];
+    const createdBy = req.body?.createdBy || "system";
 
     if (!tagId) {
       return res.status(400).json({ message: "tagId wajib diisi" });
@@ -449,15 +510,16 @@ app.post("/api/assets", async (req, res, next) => {
       debitAmount: fairValue,
       creditAccount: "1-1100 Kas",
       creditAmount: fairValue,
+      createdBy,
     };
 
     await withTransaction(async (connection) => {
       await connection.query(
-        "INSERT INTO biological_assets (id, tag_id, type, age, age_updated_at, weight, fair_value, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        [id, tagId, type, age, ageUpdatedAt, weight, fairValue, lastUpdated],
+        "INSERT INTO biological_assets (id, tag_id, type, age, age_updated_at, weight, fair_value, purchase_price, profit, loss, last_updated, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [id, tagId, type, age, ageUpdatedAt, weight, fairValue, purchasePrice, 0, 0, lastUpdated, createdBy],
       );
       await connection.query(
-        "INSERT INTO journal_entries (id, entry_date, description, debit_account, debit_asset_id, debit_amount, credit_account, credit_asset_id, credit_amount) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO journal_entries (id, entry_date, description, debit_account, debit_asset_id, debit_amount, credit_account, credit_asset_id, credit_amount, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
           journalEntry.id,
           journalEntry.date,
@@ -468,6 +530,7 @@ app.post("/api/assets", async (req, res, next) => {
           journalEntry.creditAccount,
           null,
           journalEntry.creditAmount,
+          journalEntry.createdBy,
         ],
       );
     });
@@ -484,6 +547,7 @@ app.patch("/api/assets/:id/weight", async (req, res, next) => {
   try {
     const assetId = String(req.params.id);
     const newWeight = Number(req.body?.weight);
+    const updatedBy = req.body?.updatedBy || "system";
 
     const [rows] = await getPool().query(
       "SELECT id, tag_id, type, age, age_updated_at, weight, fair_value, last_updated FROM biological_assets WHERE id = ? LIMIT 1",
@@ -503,20 +567,20 @@ app.patch("/api/assets/:id/weight", async (req, res, next) => {
 
     await withTransaction(async (connection) => {
       await connection.query(
-        "UPDATE biological_assets SET weight = ?, fair_value = ?, last_updated = ? WHERE id = ?",
-        [newWeight, updatedFairValue, today, assetId],
+        "UPDATE biological_assets SET weight = ?, fair_value = ?, last_updated = ?, updated_by = ? WHERE id = ?",
+        [newWeight, updatedFairValue, today, updatedBy, assetId],
       );
 
       if (difference !== 0) {
         await connection.query(
-          "INSERT INTO journal_entries (id, entry_date, description, debit_account, debit_asset_id, debit_amount, credit_account, credit_asset_id, credit_amount) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          "INSERT INTO journal_entries (id, entry_date, description, debit_account, debit_asset_id, debit_amount, credit_account, credit_asset_id, credit_amount, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
           [
             String(Date.now()),
             today,
             `Penyesuaian Nilai Wajar ${asset.tagId} (${asset.weight}kg → ${newWeight}kg)`,
             difference > 0
               ? "1-3000 Aset Biologis"
-              : "5-2000 Kerugian Nilai Wajar",
+              : "5-4000 Kerugian Nilai Wajar",
             assetId,
             Math.abs(difference),
             difference > 0
@@ -524,6 +588,7 @@ app.patch("/api/assets/:id/weight", async (req, res, next) => {
               : "1-3000 Aset Biologis",
             difference < 0 ? assetId : null,
             Math.abs(difference),
+            updatedBy,
           ],
         );
       }
@@ -540,6 +605,7 @@ app.patch("/api/assets/:id/weight", async (req, res, next) => {
 app.delete("/api/assets/:id", async (req, res, next) => {
   try {
     const assetId = String(req.params.id);
+    const deletedBy = req.body?.deletedBy || "system";
 
     const [rows] = await getPool().query(
       "SELECT id, tag_id, type, age, age_updated_at, weight, fair_value, last_updated FROM biological_assets WHERE id = ? LIMIT 1",
@@ -555,7 +621,7 @@ app.delete("/api/assets/:id", async (req, res, next) => {
 
     await withTransaction(async (connection) => {
       await connection.query(
-        "INSERT INTO journal_entries (id, entry_date, description, debit_account, debit_asset_id, debit_amount, credit_account, credit_asset_id, credit_amount) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO journal_entries (id, entry_date, description, debit_account, debit_asset_id, debit_amount, credit_account, credit_asset_id, credit_amount, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
           String(Date.now()),
           today,
@@ -566,6 +632,7 @@ app.delete("/api/assets/:id", async (req, res, next) => {
           "1-3000 Aset Biologis",
           assetId,
           asset.fairValue,
+          deletedBy,
         ],
       );
 
@@ -584,7 +651,33 @@ app.delete("/api/assets/:id", async (req, res, next) => {
 
 app.post("/api/journal-entries", async (req, res, next) => {
   try {
-    await addJournalEntry(req.body || {});
+    const id = String(req.body?.id || Date.now());
+    const date = req.body?.date;
+    const description = req.body?.description;
+    const debitAccount = req.body?.debitAccount;
+    const debitAssetId = req.body?.debitAssetId || null;
+    const debitAmount = Number(req.body?.debitAmount || 0);
+    const creditAccount = req.body?.creditAccount;
+    const creditAssetId = req.body?.creditAssetId || null;
+    const creditAmount = Number(req.body?.creditAmount || 0);
+    const createdBy = req.body?.createdBy || "system";
+
+    await getPool().query(
+      "INSERT INTO journal_entries (id, entry_date, description, debit_account, debit_asset_id, debit_amount, credit_account, credit_asset_id, credit_amount, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [
+        id,
+        date,
+        description,
+        debitAccount,
+        debitAssetId,
+        debitAmount,
+        creditAccount,
+        creditAssetId,
+        creditAmount,
+        createdBy,
+      ],
+    );
+
     const state = await getState();
     await ensureMonthlyBackup();
     res.json(state);
@@ -605,10 +698,11 @@ app.put("/api/journal-entries/:id", async (req, res, next) => {
       creditAccount: req.body?.creditAccount,
       creditAssetId: req.body?.creditAssetId || null,
       creditAmount: Number(req.body?.creditAmount || 0),
+      updatedBy: req.body?.updatedBy || "system",
     };
 
     await getPool().query(
-      "UPDATE journal_entries SET entry_date = ?, description = ?, debit_account = ?, debit_asset_id = ?, debit_amount = ?, credit_account = ?, credit_asset_id = ?, credit_amount = ? WHERE id = ?",
+      "UPDATE journal_entries SET entry_date = ?, description = ?, debit_account = ?, debit_asset_id = ?, debit_amount = ?, credit_account = ?, credit_asset_id = ?, credit_amount = ?, updated_by = ? WHERE id = ?",
       [
         payload.date,
         payload.description,
@@ -618,6 +712,7 @@ app.put("/api/journal-entries/:id", async (req, res, next) => {
         payload.creditAccount,
         payload.creditAssetId,
         payload.creditAmount,
+        payload.updatedBy,
         journalId,
       ],
     );
@@ -673,6 +768,225 @@ app.get("/api/journal-entries", async (_req, res, next) => {
   try {
     const state = await getState();
     res.json({ journalEntries: state.journalEntries });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ========== ADMIN USERS ENDPOINTS ==========
+app.get("/api/admin-users", async (_req, res, next) => {
+  try {
+    const [rows] = await getPool().query(
+      "SELECT id, username, full_name, email, role, is_active, created_at, created_by FROM admin_users ORDER BY created_at ASC",
+    );
+    const admins = rows.map(normalizeAdminUser);
+    res.json({ admins });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/admin-users", async (req, res, next) => {
+  try {
+    const id = String(req.body?.id || Date.now());
+    const username = String(req.body?.username || "").trim();
+    const fullName = String(req.body?.fullName || "").trim();
+    const email = req.body?.email || null;
+    const role = req.body?.role || "operator";
+    const isActive = req.body?.isActive !== false;
+
+    if (!username || !fullName) {
+      return res.status(400).json({ message: "Username dan nama lengkap wajib diisi" });
+    }
+
+    const passwordHash = hashPassword("admin123");
+    await getPool().query(
+      "INSERT INTO admin_users (id, username, full_name, email, role, is_active, password_hash) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [id, username, fullName, email, role, isActive, passwordHash],
+    );
+
+    const [newRow] = await getPool().query(
+      "SELECT id, username, full_name, email, role, is_active, created_at, created_by FROM admin_users WHERE id = ?",
+      [id],
+    );
+
+    res.json({ admin: normalizeAdminUser(newRow[0]) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.put("/api/admin-users/:id", async (req, res, next) => {
+  try {
+    const id = String(req.params.id);
+    const fullName = req.body?.fullName;
+    const email = req.body?.email;
+    const role = req.body?.role;
+    const isActive = req.body?.isActive;
+
+    const updates = [];
+    const values = [];
+
+    if (fullName !== undefined) {
+      updates.push("full_name = ?");
+      values.push(fullName);
+    }
+    if (email !== undefined) {
+      updates.push("email = ?");
+      values.push(email);
+    }
+    if (role !== undefined) {
+      updates.push("role = ?");
+      values.push(role);
+    }
+    if (isActive !== undefined) {
+      updates.push("is_active = ?");
+      values.push(isActive);
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({ message: "Tidak ada field yang diupdate" });
+    }
+
+    values.push(id);
+    await getPool().query(
+      `UPDATE admin_users SET ${updates.join(", ")} WHERE id = ?`,
+      values,
+    );
+
+    const [updatedRow] = await getPool().query(
+      "SELECT id, username, full_name, email, role, is_active, created_at, created_by FROM admin_users WHERE id = ?",
+      [id],
+    );
+
+    res.json({ admin: normalizeAdminUser(updatedRow[0]) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.delete("/api/admin-users/:id", async (req, res, next) => {
+  try {
+    const id = String(req.params.id);
+    await getPool().query("DELETE FROM admin_users WHERE id = ?", [id]);
+    res.json({ success: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ========== JOURNAL DOCUMENTS ENDPOINTS ==========
+app.post("/api/journal-documents", async (req, res, next) => {
+  try {
+    const id = String(req.body?.id || Date.now());
+    const journalEntryId = String(req.body?.journalEntryId || "");
+    const fileName = String(req.body?.fileName || "").trim();
+    const fileData = req.body?.fileData || "";
+    const fileType = req.body?.fileType || "";
+
+    if (!journalEntryId || !fileName || !fileData) {
+      return res.status(400).json({ message: "Semua field wajib diisi" });
+    }
+
+    await getPool().query(
+      "INSERT INTO journal_documents (id, journal_entry_id, file_name, file_data, file_type, uploaded_at) VALUES (?, ?, ?, ?, ?, NOW())",
+      [id, journalEntryId, fileName, fileData, fileType],
+    );
+
+    const [newRow] = await getPool().query(
+      "SELECT id, journal_entry_id, file_name, file_data, file_type, uploaded_at, uploaded_by FROM journal_documents WHERE id = ?",
+      [id],
+    );
+
+    res.json({ document: normalizeJournalDocument(newRow[0]) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/journal-documents/:journalEntryId", async (req, res, next) => {
+  try {
+    const journalEntryId = String(req.params.journalEntryId || "");
+    const [rows] = await getPool().query(
+      "SELECT id, journal_entry_id, file_name, file_data, file_type, uploaded_at, uploaded_by FROM journal_documents WHERE journal_entry_id = ? ORDER BY uploaded_at DESC",
+      [journalEntryId],
+    );
+
+    const documents = rows.map(normalizeJournalDocument);
+    res.json({ documents });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.delete("/api/journal-documents/:id", async (req, res, next) => {
+  try {
+    const id = String(req.params.id);
+    await getPool().query("DELETE FROM journal_documents WHERE id = ?", [id]);
+    res.json({ success: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ========== CHART OF ACCOUNTS ENDPOINTS ==========
+app.get("/api/chart-of-accounts", async (_req, res, next) => {
+  try {
+    const [rows] = await getPool().query(
+      "SELECT code, name, parent_code, category, is_active, created_at, created_by FROM chart_of_accounts ORDER BY code ASC",
+    );
+
+    const accounts = rows.map(normalizeChartOfAccount);
+    res.json({ chartOfAccounts: accounts });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/chart-of-accounts", async (req, res, next) => {
+  try {
+    const code = String(req.body?.code || "").trim();
+    const name = String(req.body?.name || "").trim();
+    const parentCode = req.body?.parentCode || null;
+    const category = req.body?.category || "expense";
+    const isActive = req.body?.isActive !== false;
+
+    if (!code || !name) {
+      return res.status(400).json({ message: "Kode dan nama akun wajib diisi" });
+    }
+
+    await getPool().query(
+      "INSERT INTO chart_of_accounts (code, name, parent_code, category, is_active) VALUES (?, ?, ?, ?, ?)",
+      [code, name, parentCode, category, isActive],
+    );
+
+    const [newRow] = await getPool().query(
+      "SELECT code, name, parent_code, category, is_active, created_at, created_by FROM chart_of_accounts WHERE code = ?",
+      [code],
+    );
+
+    res.json({ account: normalizeChartOfAccount(newRow[0]) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.delete("/api/chart-of-accounts/:code", async (req, res, next) => {
+  try {
+    const code = String(req.params.code || "");
+
+    // Check if used in journal entries
+    const [usageRows] = await getPool().query(
+      "SELECT COUNT(*) AS count FROM journal_entries WHERE debit_account LIKE ? OR credit_account LIKE ?",
+      [`%${code}%`, `%${code}%`],
+    );
+
+    if (usageRows[0].count > 0) {
+      return res.status(400).json({ message: "Tidak bisa hapus akun yang sudah digunakan dalam jurnal" });
+    }
+
+    await getPool().query("DELETE FROM chart_of_accounts WHERE code = ?", [code]);
+    res.json({ success: true });
   } catch (error) {
     next(error);
   }

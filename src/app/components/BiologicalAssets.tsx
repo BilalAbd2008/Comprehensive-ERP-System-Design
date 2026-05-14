@@ -1,29 +1,42 @@
 import { useEffect, useState } from 'react';
 import { useData } from '../context/DataContext';
-import { Edit2, Check, X, QrCode, Scan, Plus, Trash2 } from 'lucide-react';
+import { Edit2, Check, X, QrCode, Scan, Plus, Trash2, ChevronDown, ChevronUp } from 'lucide-react';
 import QRCodeDisplay from './QRCodeDisplay';
 
 export default function BiologicalAssets() {
   const {
     biologicalAssets,
     updateAssetWeight,
+    updateBiologicalAsset,
     addBiologicalAsset,
     deleteBiologicalAsset,
     fairValuePerKg,
     setFairValuePerKg,
+    addJournalEntry,
   } = useData();
+  
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [editWeight, setEditWeight] = useState<number>(0);
+  const [editData, setEditData] = useState({
+    weight: 0,
+    purchasePrice: 0,
+    profit: 0,
+    loss: 0,
+    lastUpdated: '',
+    manualDate: false,
+  });
   const [showQRCode, setShowQRCode] = useState<string | null>(null);
   const [scanMode, setScanMode] = useState(false);
   const [scanInput, setScanInput] = useState('');
   const [showAddForm, setShowAddForm] = useState(false);
+  const [expandedAssetId, setExpandedAssetId] = useState<string | null>(null);
   const [pricePerKgInput, setPricePerKgInput] = useState<string>(String(fairValuePerKg));
+  
   const [newAsset, setNewAsset] = useState({
     tagId: '',
     type: 'Domba' as 'Domba' | 'Kambing',
     age: 0,
     weight: 0,
+    purchasePrice: 0,
   });
 
   useEffect(() => {
@@ -38,13 +51,77 @@ export default function BiologicalAssets() {
     }).format(value);
   };
 
-  const handleEdit = (id: string, currentWeight: number) => {
+  const handleEdit = (id: string, asset: any) => {
     setEditingId(id);
-    setEditWeight(currentWeight);
+    setEditData({
+      weight: asset.weight,
+      purchasePrice: asset.purchasePrice || 0,
+      profit: asset.profit || 0,
+      loss: asset.loss || 0,
+      lastUpdated: asset.lastUpdated,
+      manualDate: false,
+    });
   };
 
   const handleSave = async (id: string) => {
-    await updateAssetWeight(id, editWeight);
+    const asset = biologicalAssets.find(a => a.id === id);
+    if (!asset) return;
+
+    const oldFairValue = asset.fairValue;
+    const newFairValue = editData.weight * fairValuePerKg;
+    const difference = newFairValue - oldFairValue;
+
+    // Update asset
+    await updateBiologicalAsset(id, {
+      weight: editData.weight,
+      fairValue: newFairValue,
+      purchasePrice: editData.purchasePrice,
+      profit: editData.profit || 0,
+      loss: editData.loss || 0,
+      lastUpdated: editData.manualDate ? editData.lastUpdated : new Date().toISOString().split('T')[0],
+    });
+
+    // Auto-create journal entries if there are profit/loss changes
+    if (difference !== 0 || editData.profit > 0 || editData.loss > 0) {
+      if (difference !== 0) {
+        // Fair value adjustment
+        await addJournalEntry({
+          date: editData.manualDate ? editData.lastUpdated : new Date().toISOString().split('T')[0],
+          description: `Penyesuaian Nilai Wajar ${asset.tagId} (${asset.weight}kg → ${editData.weight}kg)`,
+          debitAccount: difference > 0 ? "1-3000 Aset Biologis" : "5-4000 Kerugian Nilai Wajar",
+          debitAssetId: id,
+          debitAmount: Math.abs(difference),
+          creditAccount: difference > 0 ? "4-2000 Keuntungan Nilai Wajar" : "1-3000 Aset Biologis",
+          creditAssetId: difference < 0 ? id : undefined,
+          creditAmount: Math.abs(difference),
+        });
+      }
+
+      // Profit journal entry
+      if (editData.profit > 0) {
+        await addJournalEntry({
+          date: editData.manualDate ? editData.lastUpdated : new Date().toISOString().split('T')[0],
+          description: `Keuntungan ${asset.tagId} - ${asset.type}`,
+          debitAccount: "1-1100 Kas",
+          debitAmount: editData.profit,
+          creditAccount: "4-1000 Pendapatan Penjualan",
+          creditAmount: editData.profit,
+        });
+      }
+
+      // Loss journal entry
+      if (editData.loss > 0) {
+        await addJournalEntry({
+          date: editData.manualDate ? editData.lastUpdated : new Date().toISOString().split('T')[0],
+          description: `Kerugian ${asset.tagId} - ${asset.type}`,
+          debitAccount: "5-5000 Beban Lain-lain",
+          debitAmount: editData.loss,
+          creditAccount: "1-1100 Kas",
+          creditAmount: editData.loss,
+        });
+      }
+    }
+
     setEditingId(null);
   };
 
@@ -55,8 +132,7 @@ export default function BiologicalAssets() {
   const handleScanSubmit = () => {
     const asset = biologicalAssets.find(a => a.tagId === scanInput);
     if (asset) {
-      setEditingId(asset.id);
-      setEditWeight(asset.weight);
+      handleEdit(asset.id, asset);
       setScanMode(false);
       setScanInput('');
     } else {
@@ -70,8 +146,9 @@ export default function BiologicalAssets() {
     await addBiologicalAsset({
       ...newAsset,
       fairValue,
+      purchasePrice: newAsset.purchasePrice || fairValue,
     });
-    setNewAsset({ tagId: '', type: 'Domba', age: 0, weight: 0 });
+    setNewAsset({ tagId: '', type: 'Domba', age: 0, weight: 0, purchasePrice: 0 });
     setShowAddForm(false);
   };
 
@@ -98,7 +175,7 @@ export default function BiologicalAssets() {
             Modul Aset Biologis
           </h1>
           <p className="text-sm" style={{ color: '#6C757D' }}>
-            Integrated Tracking - PSAK 241
+            Integrated Tracking - PSAK 241 dengan Nilai Beli, Untung & Rugi
           </p>
         </div>
         <div className="flex gap-3">
@@ -149,11 +226,11 @@ export default function BiologicalAssets() {
               </button>
             </div>
             <p className="text-xs mt-2" style={{ color: '#6C757D' }}>
-              Nilai ini akan tersimpan dan dipakai untuk perhitungan berikutnya sampai kamu ubah lagi.
+              Harga saat ini: Rp {Number(fairValuePerKg).toLocaleString('id-ID')}/kg
             </p>
           </div>
           <form onSubmit={handleAddAsset} className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-3 gap-4">
               <div>
                 <label className="block text-sm mb-2" style={{ color: '#495057' }}>ID Tag</label>
                 <input
@@ -200,11 +277,30 @@ export default function BiologicalAssets() {
                   required
                 />
               </div>
+              <div>
+                <label className="block text-sm mb-2" style={{ color: '#495057' }}>Harga Beli</label>
+                <input
+                  type="number"
+                  value={newAsset.purchasePrice}
+                  onChange={(e) => setNewAsset({ ...newAsset, purchasePrice: Number(e.target.value) })}
+                  placeholder="Atau biarkan kosong"
+                  className="w-full px-3 py-2 border rounded"
+                  style={{ borderColor: '#DEE2E6' }}
+                />
+              </div>
             </div>
-            <div className="p-3 rounded" style={{ backgroundColor: '#E7F5E9' }}>
-              <div className="text-xs mb-1" style={{ color: '#495057' }}>Nilai Wajar Otomatis:</div>
-              <div className="text-base" style={{ color: '#1B4332' }}>
-                {formatCurrency(newAsset.weight * fairValuePerKg)}
+            <div className="grid grid-cols-2 gap-4">
+              <div className="p-3 rounded" style={{ backgroundColor: '#E7F5E9' }}>
+                <div className="text-xs mb-1" style={{ color: '#495057' }}>Nilai Wajar Otomatis:</div>
+                <div className="text-base" style={{ color: '#1B4332' }}>
+                  {formatCurrency(newAsset.weight * fairValuePerKg)}
+                </div>
+              </div>
+              <div className="p-3 rounded" style={{ backgroundColor: '#FFF3CD' }}>
+                <div className="text-xs mb-1" style={{ color: '#495057' }}>Harga Beli:</div>
+                <div className="text-base" style={{ color: '#856404' }}>
+                  {formatCurrency(newAsset.purchasePrice || newAsset.weight * fairValuePerKg)}
+                </div>
               </div>
             </div>
             <button
@@ -221,7 +317,7 @@ export default function BiologicalAssets() {
       {scanMode && (
         <div className="bg-white p-6 rounded-lg border mb-6" style={{ borderColor: '#FFB703' }}>
           <h2 className="text-base mb-4" style={{ color: '#1B4332' }}>
-            Scan QR Code untuk Update Real-time
+            Scan QR Code untuk Edit Real-time
           </h2>
           <div className="flex gap-3">
             <input
@@ -241,9 +337,6 @@ export default function BiologicalAssets() {
               Cari
             </button>
           </div>
-          <p className="text-xs mt-2" style={{ color: '#6C757D' }}>
-            Simulasi: Ketik ID Tag (DOM-001, KMB-001, dll) untuk mensimulasikan scan QR code
-          </p>
         </div>
       )}
 
@@ -252,18 +345,21 @@ export default function BiologicalAssets() {
           <table className="w-full">
             <thead>
               <tr style={{ backgroundColor: '#1B4332', color: 'white' }}>
-                <th className="px-4 py-3 text-left text-sm">QR Code</th>
+                <th className="px-4 py-3 text-left text-sm">QR</th>
                 <th className="px-4 py-3 text-left text-sm">ID Tag</th>
                 <th className="px-4 py-3 text-left text-sm">Jenis</th>
-                <th className="px-4 py-3 text-left text-sm">Umur (bulan)</th>
+                <th className="px-4 py-3 text-left text-sm">Umur</th>
                 <th className="px-4 py-3 text-left text-sm">Berat (kg)</th>
+                <th className="px-4 py-3 text-left text-sm">Harga Beli</th>
                 <th className="px-4 py-3 text-left text-sm">Nilai Wajar</th>
-                <th className="px-4 py-3 text-left text-sm">Terakhir Update</th>
+                <th className="px-4 py-3 text-left text-sm">Untung</th>
+                <th className="px-4 py-3 text-left text-sm">Rugi</th>
+                <th className="px-4 py-3 text-left text-sm">Update</th>
                 <th className="px-4 py-3 text-left text-sm">Aksi</th>
               </tr>
             </thead>
             <tbody>
-              {biologicalAssets.map((asset, idx) => (
+              {biologicalAssets.map((asset) => (
                 <tr
                   key={asset.id}
                   className="border-b transition-colors hover:bg-gray-50"
@@ -274,18 +370,15 @@ export default function BiologicalAssets() {
                       onClick={() => setShowQRCode(showQRCode === asset.id ? null : asset.id)}
                       className="p-1 rounded hover:bg-gray-100"
                     >
-                      <QrCode size={20} style={{ color: '#1B4332' }} />
+                      <QrCode size={18} style={{ color: '#1B4332' }} />
                     </button>
                     {showQRCode === asset.id && (
                       <div className="absolute z-10 mt-2 p-4 bg-white rounded-lg shadow-xl border" style={{ borderColor: '#1B4332' }}>
-                        <QRCodeDisplay value={asset.tagId} size={150} />
-                        <p className="text-xs text-center mt-2" style={{ color: '#495057' }}>{asset.tagId}</p>
+                        <QRCodeDisplay value={asset.tagId} size={120} />
                       </div>
                     )}
                   </td>
-                  <td className="px-4 py-3">
-                    <span className="text-sm" style={{ color: '#212529' }}>{asset.tagId}</span>
-                  </td>
+                  <td className="px-4 py-3 text-sm">{asset.tagId}</td>
                   <td className="px-4 py-3">
                     <span
                       className="text-xs px-2 py-1 rounded"
@@ -297,25 +390,94 @@ export default function BiologicalAssets() {
                       {asset.type}
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-sm" style={{ color: '#495057' }}>{asset.age}</td>
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-3 text-sm">{asset.age}</td>
+                  <td className="px-4 py-3 text-sm">
                     {editingId === asset.id ? (
                       <input
                         type="number"
-                        value={editWeight}
-                        onChange={(e) => setEditWeight(Number(e.target.value))}
+                        value={editData.weight}
+                        onChange={(e) => setEditData({ ...editData, weight: Number(e.target.value) })}
                         className="w-20 px-2 py-1 border rounded text-sm"
                         style={{ borderColor: '#FFB703' }}
                         autoFocus
                       />
                     ) : (
-                      <span className="text-sm" style={{ color: '#212529' }}>{asset.weight}</span>
+                      asset.weight
                     )}
                   </td>
-                  <td className="px-4 py-3 text-sm" style={{ color: '#1B4332' }}>
-                    {formatCurrency(editingId === asset.id ? editWeight * fairValuePerKg : asset.fairValue)}
+                  <td className="px-4 py-3 text-sm">
+                    {editingId === asset.id ? (
+                      <input
+                        type="number"
+                        value={editData.purchasePrice}
+                        onChange={(e) => setEditData({ ...editData, purchasePrice: Number(e.target.value) })}
+                        className="w-24 px-2 py-1 border rounded text-sm"
+                        style={{ borderColor: '#FFB703' }}
+                      />
+                    ) : (
+                      formatCurrency(asset.purchasePrice || 0)
+                    )}
                   </td>
-                  <td className="px-4 py-3 text-xs" style={{ color: '#6C757D' }}>{asset.lastUpdated}</td>
+                  <td className="px-4 py-3 text-sm font-semibold">
+                    {formatCurrency(editingId === asset.id ? editData.weight * fairValuePerKg : asset.fairValue)}
+                  </td>
+                  <td className="px-4 py-3 text-sm">
+                    {editingId === asset.id ? (
+                      <input
+                        type="number"
+                        value={editData.profit}
+                        onChange={(e) => setEditData({ ...editData, profit: Number(e.target.value) })}
+                        placeholder="0"
+                        className="w-24 px-2 py-1 border rounded text-sm"
+                        style={{ borderColor: '#28A745' }}
+                      />
+                    ) : (
+                      <span style={{ color: asset.profit ? '#28A745' : '#6C757D' }}>
+                        {formatCurrency(asset.profit || 0)}
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-sm">
+                    {editingId === asset.id ? (
+                      <input
+                        type="number"
+                        value={editData.loss}
+                        onChange={(e) => setEditData({ ...editData, loss: Number(e.target.value) })}
+                        placeholder="0"
+                        className="w-24 px-2 py-1 border rounded text-sm"
+                        style={{ borderColor: '#DC3545' }}
+                      />
+                    ) : (
+                      <span style={{ color: asset.loss ? '#DC3545' : '#6C757D' }}>
+                        {formatCurrency(asset.loss || 0)}
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-xs">
+                    {editingId === asset.id ? (
+                      <div className="space-y-1">
+                        <label className="flex items-center gap-2 text-xs">
+                          <input
+                            type="checkbox"
+                            checked={editData.manualDate}
+                            onChange={(e) => setEditData({ ...editData, manualDate: e.target.checked })}
+                          />
+                          Manual
+                        </label>
+                        {editData.manualDate && (
+                          <input
+                            type="date"
+                            value={editData.lastUpdated}
+                            onChange={(e) => setEditData({ ...editData, lastUpdated: e.target.value })}
+                            className="w-full px-2 py-1 border rounded text-xs"
+                            style={{ borderColor: '#DEE2E6' }}
+                          />
+                        )}
+                      </div>
+                    ) : (
+                      asset.lastUpdated
+                    )}
+                  </td>
                   <td className="px-4 py-3">
                     {editingId === asset.id ? (
                       <div className="flex gap-2">
@@ -337,7 +499,7 @@ export default function BiologicalAssets() {
                     ) : (
                       <div className="flex gap-2">
                         <button
-                          onClick={() => handleEdit(asset.id, asset.weight)}
+                          onClick={() => handleEdit(asset.id, asset)}
                           className="p-1.5 rounded transition-colors"
                           style={{ backgroundColor: '#FFB703', color: '#212529' }}
                         >
@@ -358,11 +520,18 @@ export default function BiologicalAssets() {
             </tbody>
             <tfoot>
               <tr style={{ backgroundColor: '#F8F9FA' }}>
-                <td colSpan={4} className="px-4 py-3 text-sm" style={{ color: '#1B4332' }}>
-                  Total Populasi: {biologicalAssets.length} Ekor
+                <td colSpan={3} className="px-4 py-3 text-sm font-semibold" style={{ color: '#1B4332' }}>
+                  Total: {biologicalAssets.length} Ekor
                 </td>
-                <td className="px-4 py-3 text-sm" style={{ color: '#1B4332' }}>
+                <td colSpan={3}></td>
+                <td className="px-4 py-3 text-sm font-semibold" style={{ color: '#1B4332' }}>
                   {formatCurrency(biologicalAssets.reduce((sum, a) => sum + a.fairValue, 0))}
+                </td>
+                <td className="px-4 py-3 text-sm font-semibold" style={{ color: '#28A745' }}>
+                  {formatCurrency(biologicalAssets.reduce((sum, a) => sum + (a.profit || 0), 0))}
+                </td>
+                <td className="px-4 py-3 text-sm font-semibold" style={{ color: '#DC3545' }}>
+                  {formatCurrency(biologicalAssets.reduce((sum, a) => sum + (a.loss || 0), 0))}
                 </td>
                 <td colSpan={2}></td>
               </tr>
@@ -372,115 +541,26 @@ export default function BiologicalAssets() {
       </div>
 
       <div className="mt-6 space-y-4">
-        <div className="grid grid-cols-2 gap-4">
-          <div className="p-4 rounded-lg" style={{ backgroundColor: '#E7F5E9' }}>
-            <h3 className="text-sm mb-2" style={{ color: '#1B4332' }}>⚡ Logic Integrated - Otomatis Jurnal</h3>
-            <p className="text-xs mb-2" style={{ color: '#495057' }}>
-              Setiap perubahan berat akan <strong>OTOMATIS</strong>:
-            </p>
-            <div className="text-xs space-y-1" style={{ color: '#495057' }}>
-              <div>1️⃣ Hitung Nilai Wajar baru (Berat × Harga/kg saat ini)</div>
-              <div>📌 Harga saat ini: Rp {Number(fairValuePerKg).toLocaleString('id-ID')}/kg</div>
-              <div>2️⃣ Hitung selisih dengan Nilai Wajar lama</div>
-              <div>3️⃣ Buat jurnal entry OTOMATIS ke GL:</div>
-              <div className="pl-4 mt-1 p-2 rounded" style={{ backgroundColor: 'white' }}>
-                <strong>Debit:</strong> 1-3000 Aset Biologis<br />
-                <strong>Kredit:</strong> 4-2000 Keuntungan Nilai Wajar
-              </div>
-              <div>4️⃣ Update ke WPL, WBSA, dan Laporan Keuangan</div>
-            </div>
-            <p className="text-xs mt-2 p-2 rounded" style={{ backgroundColor: '#FFB703', color: '#212529' }}>
-              ✅ <strong>Single Input</strong> - Tidak perlu input dua kali!
-            </p>
-          </div>
-
-          <div className="p-4 rounded-lg" style={{ backgroundColor: '#FFF3CD' }}>
-            <h3 className="text-sm mb-2" style={{ color: '#856404' }}>📱 Fitur QR Code Real-time</h3>
-            <p className="text-xs" style={{ color: '#856404' }}>
-              • Klik ikon QR untuk melihat kode<br />
-              • Gunakan tombol "Scan QR Code" untuk update real-time<br />
-              • Setiap aset memiliki QR unik untuk tracking<br />
-              • Scan → Update Berat → Otomatis Jurnal!
+        <div className="p-4 rounded-lg" style={{ backgroundColor: '#E7F5E9' }}>
+          <h3 className="text-sm mb-2" style={{ color: '#1B4332' }}>✨ Fitur Baru: Nilai Beli, Untung & Rugi</h3>
+          <div className="text-xs space-y-2" style={{ color: '#495057' }}>
+            <p><strong>Kolom Harga Beli:</strong> Input harga saat membeli aset (opsional, default = nilai wajar)</p>
+            <p><strong>Kolom Untung:</strong> Input keuntungan jika aset dijual dengan laba</p>
+            <p><strong>Kolom Rugi:</strong> Input kerugian jika aset dijual dengan rugi</p>
+            <p className="p-2 rounded" style={{ backgroundColor: '#fff' }}>
+              🔄 <strong>Otomatis Jurnal:</strong> Setiap kali Anda edit dan simpan, sistem akan otomatis membuat jurnal untuk:
+              <br />• Penyesuaian nilai wajar
+              <br />• Pencatatan keuntungan ke Pendapatan Penjualan
+              <br />• Pencatatan kerugian ke Beban Lain-lain
             </p>
           </div>
         </div>
 
-        <div className="p-6 rounded-lg border-2" style={{ backgroundColor: 'white', borderColor: '#1B4332' }}>
-          <h3 className="text-base mb-3" style={{ color: '#1B4332' }}>📚 PSAK 241: Akuntansi Pertanian & Aset Biologis</h3>
-
-          <div className="space-y-4">
-            <div>
-              <h4 className="text-sm mb-2" style={{ color: '#495057' }}>🎯 Definisi Aset Biologis</h4>
-              <p className="text-xs" style={{ color: '#6C757D' }}>
-                Aset biologis adalah hewan atau tanaman hidup yang dikelola entitas dalam kegiatan pertanian.
-                Contoh: kambing dan domba peternakan Hers Farm.
-              </p>
-            </div>
-
-            <div>
-              <h4 className="text-sm mb-2" style={{ color: '#495057' }}>💰 Pengukuran Nilai Wajar (Fair Value Model)</h4>
-              <p className="text-xs mb-2" style={{ color: '#6C757D' }}>
-                PSAK 241 mengharuskan aset biologis diukur pada <strong>nilai wajar dikurangi biaya untuk menjual</strong>:
-              </p>
-              <div className="text-xs space-y-1 pl-4" style={{ color: '#6C757D' }}>
-                • <strong>Pengakuan Awal:</strong> Nilai wajar saat pembelian/lahir<br />
-                • <strong>Pengukuran Selanjutnya:</strong> Nilai wajar setiap periode pelaporan<br />
-                • <strong>Perubahan Nilai Wajar:</strong> Diakui di Laba Rugi periode berjalan
-              </div>
-            </div>
-
-            <div className="p-3 rounded" style={{ backgroundColor: '#E7F5E9' }}>
-              <h4 className="text-sm mb-2" style={{ color: '#1B4332' }}>📊 Cara Kerja di Hers Farm</h4>
-              <div className="text-xs space-y-2" style={{ color: '#495057' }}>
-                <div>
-                  <strong>Contoh Kasus:</strong><br />
-                  Domba DOM-001 berat 35kg (Nilai Wajar: Rp 3.500.000)
-                </div>
-                <div className="pl-4">
-                  ⬇️ Setelah 3 bulan, berat naik 38kg
-                </div>
-                <div className="pl-4">
-                  📝 <strong>Sistem Otomatis:</strong><br />
-                  1. Nilai Wajar Baru = 38kg × Rp 100.000 = Rp 3.800.000<br />
-                  2. Selisih = Rp 3.800.000 - Rp 3.500.000 = Rp 300.000<br />
-                  3. Jurnal Otomatis:<br />
-                  <span className="pl-4">Dr. Aset Biologis: Rp 300.000</span><br />
-                  <span className="pl-4">Cr. Keuntungan Nilai Wajar: Rp 300.000</span>
-                </div>
-              </div>
-            </div>
-
-            <div>
-              <h4 className="text-sm mb-2" style={{ color: '#495057' }}>🔄 Transformasi Biologis</h4>
-              <p className="text-xs" style={{ color: '#6C757D' }}>
-                Perubahan kualitatif (pertumbuhan, degenerasi) dan kuantitatif (produksi) dari aset biologis
-                yang menyebabkan perubahan nilai. Contoh: pertambahan berat domba seiring waktu.
-              </p>
-            </div>
-
-            <div>
-              <h4 className="text-sm mb-2" style={{ color: '#495057' }}>📋 PSAK 69: Agrikultur</h4>
-              <p className="text-xs" style={{ color: '#6C757D' }}>
-                PSAK 69 adalah standar internasional (adopsi IAS 41) yang mengatur:
-              </p>
-              <div className="text-xs pl-4 mt-1" style={{ color: '#6C757D' }}>
-                • Pengakuan dan pengukuran aset biologis<br />
-                • Produk pertanian pada saat panen (diukur nilai wajar)<br />
-                • Pengungkapan terkait aktivitas pertanian<br />
-                • Perbedaan bearer plants (diatur PSAK 16) vs consumable plants
-              </div>
-            </div>
-
-            <div className="p-3 rounded" style={{ backgroundColor: '#FFF3CD' }}>
-              <h4 className="text-sm mb-2" style={{ color: '#856404' }}>⚠️ Catatan Penting</h4>
-              <p className="text-xs" style={{ color: '#856404' }}>
-                • Keuntungan/kerugian nilai wajar adalah <strong>unrealized gain/loss</strong> (belum terealisasi)<br />
-                • Baru terealisasi saat hewan dijual (recognized di HPP)<br />
-                • Pakan yang dikonsumsi untuk pertumbuhan <strong>dikapitalisasi</strong> ke Aset Biologis, bukan beban<br />
-                • Sistem otomatis memastikan compliance PSAK 241/69
-              </p>
-            </div>
-          </div>
+        <div className="p-4 rounded-lg" style={{ backgroundColor: '#FFF3CD' }}>
+          <h3 className="text-sm mb-2" style={{ color: '#856404' }}>📅 Fitur Tanggal Manual</h3>
+          <p className="text-xs" style={{ color: '#856404' }}>
+            Saat edit, centang "Manual" untuk mengubah tanggal update. Tanggal otomatis (hari ini) akan digunakan jika tidak diubah.
+          </p>
         </div>
       </div>
     </div>

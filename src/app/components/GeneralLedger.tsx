@@ -1,60 +1,41 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useData } from '../context/DataContext';
-import { Plus, Pencil, Check, X, Trash2 } from 'lucide-react';
-
-const defaultChartOfAccounts = [
-  { code: '1-1100', name: 'Kas' },
-  { code: '1-1200', name: 'Bank' },
-  { code: '1-2100', name: 'Persediaan Pakan' },
-  { code: '1-3000', name: 'Aset Biologis' },
-  { code: '1-4100', name: 'Aset Tetap - Kandang' },
-  { code: '1-4200', name: 'Akumulasi Penyusutan' },
-  { code: '2-1000', name: 'Hutang Usaha' },
-  { code: '3-1000', name: 'Modal Disetor' },
-  { code: '3-2000', name: 'Laba Ditahan' },
-  { code: '4-1000', name: 'Pendapatan Penjualan' },
-  { code: '4-2000', name: 'Keuntungan Nilai Wajar' },
-  { code: '4-3000', name: 'Pendapatan Lain-lain' },
-  { code: '5-1000', name: 'Beban Gaji' },
-  { code: '5-2000', name: 'Beban Pakan' },
-  { code: '5-3000', name: 'Harga Pokok Penjualan' },
-  { code: '5-4000', name: 'Kerugian Nilai Wajar' },
-  { code: '5-5000', name: 'Beban Lain-lain' },
-  { code: '5-6000', name: 'Beban Penyusutan' },
-];
-
-const CHART_OF_ACCOUNTS_STORAGE_KEY = 'hers-farm-chart-of-accounts';
-
-type AccountOption = {
-  code: string;
-  name: string;
-};
-
-const accountToValue = (account: AccountOption) => `${account.code} ${account.name}`;
+import { useData, ChartOfAccount } from '../context/DataContext';
+import { Plus, Pencil, Check, X, Trash2, ChevronDown, ChevronUp, Download, Upload } from 'lucide-react';
 
 export default function GeneralLedger() {
-  const { journalEntries, addJournalEntry, updateJournalEntry, biologicalAssets } = useData();
+  const {
+    journalEntries,
+    addJournalEntry,
+    updateJournalEntry,
+    deleteJournalEntry,
+    biologicalAssets,
+    chartOfAccounts,
+    addChartOfAccount,
+    updateChartOfAccount,
+    deleteChartOfAccount,
+    getAccountsByParent,
+    addJournalDocument,
+    getJournalDocuments,
+    deleteJournalDocument,
+    exportGeneralLedgerCSV,
+  } = useData();
+
   const [showForm, setShowForm] = useState(false);
   const [editingJournalId, setEditingJournalId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [chartOfAccounts, setChartOfAccounts] = useState<AccountOption[]>(() => {
-    const saved = localStorage.getItem(CHART_OF_ACCOUNTS_STORAGE_KEY);
-    if (!saved) return defaultChartOfAccounts;
-    try {
-      const parsed = JSON.parse(saved);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed;
-      }
-      return defaultChartOfAccounts;
-    } catch {
-      return defaultChartOfAccounts;
-    }
+  const [showCOAManager, setShowCOAManager] = useState(false);
+  const [selectedTab, setSelectedTab] = useState<'journal' | 'coa'>('journal');
+  const [expandedParents, setExpandedParents] = useState<string[]>([]);
+
+  // New Account Form
+  const [newAccount, setNewAccount] = useState({
+    code: '',
+    name: '',
+    parentCode: '',
+    category: 'asset' as const,
   });
 
-  const [newAccount, setNewAccount] = useState({ code: '', name: '' });
-  const [selectedAccountCode, setSelectedAccountCode] = useState('');
-  const [editAccount, setEditAccount] = useState({ code: '', name: '' });
-
+  // Journal Form
   const [formData, setFormData] = useState({
     date: new Date().toISOString().split('T')[0],
     description: '',
@@ -64,8 +45,10 @@ export default function GeneralLedger() {
     creditAccount: '',
     creditAssetId: '',
     creditAmount: '',
+    documentFile: null as File | null,
   });
 
+  // Edit Form
   const [editFormData, setEditFormData] = useState({
     date: '',
     description: '',
@@ -77,9 +60,19 @@ export default function GeneralLedger() {
     creditAmount: '',
   });
 
+  const [documentsPreview, setDocumentsPreview] = useState<{ [key: string]: string[] }>({});
+
   useEffect(() => {
-    localStorage.setItem(CHART_OF_ACCOUNTS_STORAGE_KEY, JSON.stringify(chartOfAccounts));
-  }, [chartOfAccounts]);
+    // Load documents for all journal entries
+    const preview: { [key: string]: string[] } = {};
+    journalEntries.forEach(entry => {
+      const docs = getJournalDocuments(entry.id);
+      if (docs.length > 0) {
+        preview[entry.id] = docs.map(d => d.fileName);
+      }
+    });
+    setDocumentsPreview(preview);
+  }, [journalEntries, getJournalDocuments]);
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('id-ID', {
@@ -109,7 +102,8 @@ export default function GeneralLedger() {
     });
   }, [journalEntries, searchQuery]);
 
-  const handleAddAccount = () => {
+  // COA Management Functions
+  const handleAddAccount = async () => {
     const code = newAccount.code.trim();
     const name = newAccount.name.trim();
 
@@ -120,77 +114,40 @@ export default function GeneralLedger() {
 
     const exists = chartOfAccounts.some((account) => account.code === code);
     if (exists) {
-      alert('Kode akun sudah ada, gunakan kode lain');
+      alert('Kode akun sudah ada');
       return;
     }
 
-    const next = [...chartOfAccounts, { code, name }].sort((a, b) => a.code.localeCompare(b.code));
-    setChartOfAccounts(next);
-    setNewAccount({ code: '', name: '' });
+    await addChartOfAccount({
+      code,
+      name,
+      parentCode: newAccount.parentCode || undefined,
+      category: newAccount.category,
+      isActive: true,
+    });
+
+    setNewAccount({ code: '', name: '', parentCode: '', category: 'asset' });
   };
 
-  const loadAccountForEdit = (code: string) => {
-    setSelectedAccountCode(code);
-    const account = chartOfAccounts.find((item) => item.code === code);
-    if (!account) {
-      setEditAccount({ code: '', name: '' });
-      return;
+  const handleDeleteAccount = async (code: string) => {
+    if (window.confirm(`Hapus akun ${code}?`)) {
+      await deleteChartOfAccount(code);
     }
-    setEditAccount({ code: account.code, name: account.name });
   };
 
-  const handleEditAccount = () => {
-    if (!selectedAccountCode) {
-      alert('Pilih akun yang ingin diedit');
-      return;
-    }
-
-    const nextCode = editAccount.code.trim();
-    const nextName = editAccount.name.trim();
-
-    if (!nextCode || !nextName) {
-      alert('Kode akun dan nama akun wajib diisi');
-      return;
-    }
-
-    const duplicate = chartOfAccounts.some(
-      (account) => account.code === nextCode && account.code !== selectedAccountCode,
+  const toggleParentExpand = (parentCode: string) => {
+    setExpandedParents(prev =>
+      prev.includes(parentCode)
+        ? prev.filter(p => p !== parentCode)
+        : [...prev, parentCode]
     );
-
-    if (duplicate) {
-      alert('Kode akun sudah dipakai akun lain');
-      return;
-    }
-
-    const updated = chartOfAccounts
-      .map((account) =>
-        account.code === selectedAccountCode ? { code: nextCode, name: nextName } : account,
-      )
-      .sort((a, b) => a.code.localeCompare(b.code));
-
-    setChartOfAccounts(updated);
-    setSelectedAccountCode(nextCode);
   };
 
-  const handleDeleteAccount = () => {
-    if (!selectedAccountCode) {
-      alert('Pilih akun yang ingin dihapus');
-      return;
-    }
-
-    if (!window.confirm(`Hapus akun ${selectedAccountCode}?`)) {
-      return;
-    }
-
-    const next = chartOfAccounts.filter((account) => account.code !== selectedAccountCode);
-    setChartOfAccounts(next);
-    setSelectedAccountCode('');
-    setEditAccount({ code: '', name: '' });
-  };
-
+  // Journal Functions
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    await addJournalEntry({
+
+    const entry = {
       date: formData.date,
       description: formData.description,
       debitAccount: formData.debitAccount,
@@ -199,7 +156,26 @@ export default function GeneralLedger() {
       creditAccount: formData.creditAccount,
       creditAssetId: formData.creditAssetId || undefined,
       creditAmount: Number(formData.creditAmount),
-    });
+    };
+
+    const journalId = await addJournalEntry(entry);
+
+    // Handle document upload
+    if (formData.documentFile) {
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        const fileData = e.target?.result as string;
+        await addJournalDocument({
+          journalEntryId: journalId || String(Date.now()),
+          fileName: formData.documentFile!.name,
+          fileData: fileData,
+          fileType: formData.documentFile!.type,
+          uploadedAt: new Date().toISOString(),
+        });
+      };
+      reader.readAsDataURL(formData.documentFile);
+    }
+
     setShowForm(false);
     setFormData({
       date: new Date().toISOString().split('T')[0],
@@ -210,6 +186,7 @@ export default function GeneralLedger() {
       creditAccount: '',
       creditAssetId: '',
       creditAmount: '',
+      documentFile: null,
     });
   };
 
@@ -229,10 +206,6 @@ export default function GeneralLedger() {
     });
   };
 
-  const cancelEditJournal = () => {
-    setEditingJournalId(null);
-  };
-
   const saveEditJournal = async () => {
     if (!editingJournalId) return;
     await updateJournalEntry(editingJournalId, {
@@ -248,417 +221,434 @@ export default function GeneralLedger() {
     setEditingJournalId(null);
   };
 
+  const handleExportCSV = () => {
+    const csv = exportGeneralLedgerCSV();
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `buku-besar-${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    window.URL.revokeObjectURL(url);
+  };
+
+  const renderCOAHierarchy = (parentCode?: string, level = 0) => {
+    const childAccounts = getAccountsByParent(parentCode);
+    if (childAccounts.length === 0 && parentCode) return null;
+
+    return childAccounts.map(account => {
+      const hasChildren = getAccountsByParent(account.code).length > 0;
+      const isExpanded = expandedParents.includes(account.code);
+
+      return (
+        <div key={account.code}>
+          <div
+            className="p-2 hover:bg-gray-100 flex items-center gap-2"
+            style={{
+              paddingLeft: `${16 + level * 20}px`,
+              backgroundColor: level === 0 ? '#F8F9FA' : 'white',
+            }}
+          >
+            {hasChildren && (
+              <button
+                onClick={() => toggleParentExpand(account.code)}
+                className="p-0.5"
+              >
+                {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+              </button>
+            )}
+            {!hasChildren && <div className="w-6" />}
+            <span className="text-sm font-mono font-semibold">{account.code}</span>
+            <span className="text-sm flex-1">{account.name}</span>
+            <button
+              onClick={() => handleDeleteAccount(account.code)}
+              className="p-1 rounded opacity-0 hover:opacity-100"
+              style={{ backgroundColor: '#FFE5E5' }}
+            >
+              <Trash2 size={12} />
+            </button>
+          </div>
+          {isExpanded && hasChildren && renderCOAHierarchy(account.code, level + 1)}
+        </div>
+      );
+    });
+  };
+
   return (
     <div className="p-8">
       <div className="mb-6 flex items-center justify-between">
         <div>
           <h1 className="text-2xl mb-1" style={{ color: '#1B4332' }}>
-            Jurnal Umum / General Ledger
+            Jurnal Umum & Chart of Accounts
           </h1>
           <p className="text-sm" style={{ color: '#6C757D' }}>
-            Double Entry System
+            Double Entry System dengan Parent-Child Akun & Dokumen Pendukung
           </p>
         </div>
+        <div className="flex gap-2">
+          <button
+            onClick={handleExportCSV}
+            className="flex items-center gap-2 px-4 py-2 rounded text-white transition-opacity hover:opacity-90"
+            style={{ backgroundColor: '#6C757D' }}
+          >
+            <Download size={18} />
+            Export CSV
+          </button>
+          <button
+            onClick={() => setShowForm(!showForm)}
+            className="flex items-center gap-2 px-4 py-2 rounded text-white transition-opacity hover:opacity-90"
+            style={{ backgroundColor: '#1B4332' }}
+          >
+            <Plus size={18} />
+            Tambah Jurnal
+          </button>
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div className="mb-4 flex gap-2 border-b" style={{ borderColor: '#DEE2E6' }}>
         <button
-          onClick={() => setShowForm(!showForm)}
-          className="flex items-center gap-2 px-4 py-2 rounded text-white transition-opacity hover:opacity-90"
-          style={{ backgroundColor: '#1B4332' }}
+          onClick={() => setSelectedTab('journal')}
+          className="px-4 py-2 text-sm font-medium"
+          style={{
+            color: selectedTab === 'journal' ? '#1B4332' : '#6C757D',
+            borderBottom: selectedTab === 'journal' ? '2px solid #1B4332' : 'none',
+          }}
         >
-          <Plus size={18} />
-          Tambah Jurnal
+          Jurnal Umum
+        </button>
+        <button
+          onClick={() => setSelectedTab('coa')}
+          className="px-4 py-2 text-sm font-medium"
+          style={{
+            color: selectedTab === 'coa' ? '#1B4332' : '#6C757D',
+            borderBottom: selectedTab === 'coa' ? '2px solid #1B4332' : 'none',
+          }}
+        >
+          Chart of Accounts
         </button>
       </div>
 
-      {showForm && (
-        <div className="bg-white p-6 rounded-lg border mb-6" style={{ borderColor: '#DEE2E6' }}>
-          <h2 className="text-base mb-4" style={{ color: '#1B4332' }}>
-            Form Input Jurnal
-          </h2>
-          <div className="mb-5 p-4 rounded-lg" style={{ backgroundColor: '#F8F9FA' }}>
-            <h3 className="text-sm mb-3" style={{ color: '#1B4332' }}>Kelola Chart of Account (COA)</h3>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <div className="text-xs" style={{ color: '#495057' }}>Tambah Akun Baru</div>
-                <div className="grid grid-cols-2 gap-2">
-                  <input
-                    type="text"
-                    placeholder="Kode (contoh 1-1300)"
-                    value={newAccount.code}
-                    onChange={(e) => setNewAccount({ ...newAccount, code: e.target.value })}
-                    className="w-full px-3 py-2 border rounded text-sm"
-                    style={{ borderColor: '#DEE2E6' }}
-                  />
-                  <input
-                    type="text"
-                    placeholder="Nama akun"
-                    value={newAccount.name}
-                    onChange={(e) => setNewAccount({ ...newAccount, name: e.target.value })}
-                    className="w-full px-3 py-2 border rounded text-sm"
-                    style={{ borderColor: '#DEE2E6' }}
-                  />
-                </div>
-                <button
-                  type="button"
-                  onClick={handleAddAccount}
-                  className="px-3 py-2 rounded text-white text-sm"
-                  style={{ backgroundColor: '#1B4332' }}
-                >
-                  Tambah Akun
-                </button>
-              </div>
+      {selectedTab === 'journal' && (
+        <>
+          {showForm && (
+            <div className="bg-white p-6 rounded-lg border mb-6" style={{ borderColor: '#DEE2E6' }}>
+              <h2 className="text-base mb-4" style={{ color: '#1B4332' }}>
+                Form Input Jurnal
+              </h2>
 
-              <div className="space-y-2">
-                <div className="text-xs" style={{ color: '#495057' }}>Edit / Hapus Akun</div>
-                <select
-                  value={selectedAccountCode}
-                  onChange={(e) => loadAccountForEdit(e.target.value)}
-                  className="w-full px-3 py-2 border rounded text-sm"
-                  style={{ borderColor: '#DEE2E6' }}
-                >
-                  <option value="">Pilih akun</option>
-                  {chartOfAccounts.map((account) => (
-                    <option key={account.code} value={account.code}>
-                      {account.code} - {account.name}
-                    </option>
-                  ))}
-                </select>
-                <div className="grid grid-cols-2 gap-2">
-                  <input
-                    type="text"
-                    placeholder="Kode akun"
-                    value={editAccount.code}
-                    onChange={(e) => setEditAccount({ ...editAccount, code: e.target.value })}
-                    className="w-full px-3 py-2 border rounded text-sm"
-                    style={{ borderColor: '#DEE2E6' }}
-                  />
-                  <input
-                    type="text"
-                    placeholder="Nama akun"
-                    value={editAccount.name}
-                    onChange={(e) => setEditAccount({ ...editAccount, name: e.target.value })}
-                    className="w-full px-3 py-2 border rounded text-sm"
-                    style={{ borderColor: '#DEE2E6' }}
-                  />
+              <form onSubmit={handleSubmit} className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm mb-2" style={{ color: '#495057' }}>Tanggal</label>
+                    <input
+                      type="date"
+                      value={formData.date}
+                      onChange={(e) => setFormData({ ...formData, date: e.target.value })}
+                      className="w-full px-3 py-2 border rounded"
+                      style={{ borderColor: '#DEE2E6' }}
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm mb-2" style={{ color: '#495057' }}>Deskripsi</label>
+                    <input
+                      type="text"
+                      value={formData.description}
+                      onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                      className="w-full px-3 py-2 border rounded"
+                      style={{ borderColor: '#DEE2E6' }}
+                      required
+                    />
+                  </div>
                 </div>
-                <div className="flex gap-2">
+
+                <div className="grid grid-cols-2 gap-6">
+                  <div className="p-4 rounded-lg" style={{ backgroundColor: '#E7F5E9' }}>
+                    <h3 className="text-sm mb-3" style={{ color: '#1B4332' }}>Sisi Debit</h3>
+                    <div className="space-y-3">
+                      <div>
+                        <label className="block text-xs mb-1" style={{ color: '#495057' }}>Akun</label>
+                        <select
+                          value={formData.debitAccount}
+                          onChange={(e) => setFormData({ ...formData, debitAccount: e.target.value })}
+                          className="w-full px-3 py-2 border rounded text-sm"
+                          style={{ borderColor: '#DEE2E6' }}
+                          required
+                        >
+                          <option value="">Pilih Akun</option>
+                          {chartOfAccounts.filter(a => !a.parentCode).map((acc) => (
+                            <optgroup key={acc.code} label={`${acc.code} ${acc.name}`}>
+                              <option value={`${acc.code} ${acc.name}`}>
+                                {acc.code} {acc.name}
+                              </option>
+                              {getAccountsByParent(acc.code).map(child => (
+                                <option key={child.code} value={`${child.code} ${child.name}`}>
+                                  └─ {child.code} {child.name}
+                                </option>
+                              ))}
+                            </optgroup>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs mb-1" style={{ color: '#495057' }}>Jumlah</label>
+                        <input
+                          type="number"
+                          value={formData.debitAmount}
+                          onChange={(e) => setFormData({ ...formData, debitAmount: e.target.value })}
+                          className="w-full px-3 py-2 border rounded text-sm"
+                          style={{ borderColor: '#DEE2E6' }}
+                          required
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="p-4 rounded-lg" style={{ backgroundColor: '#FFF3CD' }}>
+                    <h3 className="text-sm mb-3" style={{ color: '#856404' }}>Sisi Kredit</h3>
+                    <div className="space-y-3">
+                      <div>
+                        <label className="block text-xs mb-1" style={{ color: '#495057' }}>Akun</label>
+                        <select
+                          value={formData.creditAccount}
+                          onChange={(e) => setFormData({ ...formData, creditAccount: e.target.value })}
+                          className="w-full px-3 py-2 border rounded text-sm"
+                          style={{ borderColor: '#DEE2E6' }}
+                          required
+                        >
+                          <option value="">Pilih Akun</option>
+                          {chartOfAccounts.filter(a => !a.parentCode).map((acc) => (
+                            <optgroup key={acc.code} label={`${acc.code} ${acc.name}`}>
+                              <option value={`${acc.code} ${acc.name}`}>
+                                {acc.code} {acc.name}
+                              </option>
+                              {getAccountsByParent(acc.code).map(child => (
+                                <option key={child.code} value={`${child.code} ${child.name}`}>
+                                  └─ {child.code} {child.name}
+                                </option>
+                              ))}
+                            </optgroup>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs mb-1" style={{ color: '#495057' }}>Jumlah</label>
+                        <input
+                          type="number"
+                          value={formData.creditAmount}
+                          onChange={(e) => setFormData({ ...formData, creditAmount: e.target.value })}
+                          className="w-full px-3 py-2 border rounded text-sm"
+                          style={{ borderColor: '#DEE2E6' }}
+                          required
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-lg" style={{ backgroundColor: '#F0F8FF' }}>
+                  <label className="block text-sm mb-2" style={{ color: '#495057' }}>
+                    📎 Dokumen Pendukung (Opsional)
+                  </label>
+                  <p className="text-xs mb-2" style={{ color: '#6C757D' }}>
+                    Upload bukti pembayaran, bukti gaji, invoice, atau dokumen pendukung lainnya
+                  </p>
+                  <input
+                    type="file"
+                    onChange={(e) => setFormData({ ...formData, documentFile: e.target.files?.[0] || null })}
+                    className="w-full px-3 py-2 border rounded text-sm"
+                    style={{ borderColor: '#DEE2E6' }}
+                  />
+                  {formData.documentFile && (
+                    <div className="text-xs mt-1" style={{ color: '#28A745' }}>
+                      ✓ {formData.documentFile.name}
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex gap-3">
                   <button
-                    type="button"
-                    onClick={handleEditAccount}
-                    className="px-3 py-2 rounded text-white text-sm"
+                    type="submit"
+                    className="px-4 py-2 rounded text-white transition-opacity hover:opacity-90"
                     style={{ backgroundColor: '#1B4332' }}
                   >
-                    Simpan Edit
+                    Simpan Jurnal
                   </button>
                   <button
                     type="button"
-                    onClick={handleDeleteAccount}
-                    className="px-3 py-2 rounded text-white text-sm"
-                    style={{ backgroundColor: '#DC3545' }}
+                    onClick={() => setShowForm(false)}
+                    className="px-4 py-2 rounded transition-colors"
+                    style={{ backgroundColor: '#E9ECEF', color: '#495057' }}
                   >
-                    Hapus
+                    Batal
                   </button>
                 </div>
-              </div>
+              </form>
+            </div>
+          )}
+
+          <div className="bg-white rounded-lg border overflow-hidden" style={{ borderColor: '#DEE2E6' }}>
+            <div className="p-4 border-b" style={{ borderColor: '#DEE2E6' }}>
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search jurnal..."
+                className="w-full px-3 py-2 border rounded text-sm"
+                style={{ borderColor: '#DEE2E6' }}
+              />
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr style={{ backgroundColor: '#1B4332', color: 'white' }}>
+                    <th className="px-3 py-2 text-left">Tanggal</th>
+                    <th className="px-3 py-2 text-left">Deskripsi</th>
+                    <th className="px-3 py-2 text-left">Akun Debit</th>
+                    <th className="px-3 py-2 text-right">Debit</th>
+                    <th className="px-3 py-2 text-left">Akun Kredit</th>
+                    <th className="px-3 py-2 text-right">Kredit</th>
+                    <th className="px-3 py-2 text-center">Doc</th>
+                    <th className="px-3 py-2 text-center">Aksi</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredJournalEntries.map((entry) => (
+                    <tr key={entry.id} className="border-b hover:bg-gray-50" style={{ borderColor: '#DEE2E6' }}>
+                      {editingJournalId === entry.id ? (
+                        <>
+                          <td className="px-3 py-2">
+                            <input
+                              type="date"
+                              value={editFormData.date}
+                              onChange={(e) => setEditFormData({ ...editFormData, date: e.target.value })}
+                              className="w-20 px-2 py-1 border rounded text-xs"
+                              style={{ borderColor: '#DEE2E6' }}
+                            />
+                          </td>
+                          <td className="px-3 py-2">
+                            <input
+                              type="text"
+                              value={editFormData.description}
+                              onChange={(e) => setEditFormData({ ...editFormData, description: e.target.value })}
+                              className="w-40 px-2 py-1 border rounded text-xs"
+                              style={{ borderColor: '#DEE2E6' }}
+                            />
+                          </td>
+                          <td colSpan={5} className="px-3 py-2 text-xs" style={{ color: '#6C757D' }}>
+                            Edit mode simplified - debit/kredit akan ditampilkan setelah simpan
+                          </td>
+                          <td className="px-3 py-2">
+                            <div className="flex gap-1 justify-center">
+                              <button onClick={saveEditJournal} className="p-1 rounded" style={{ backgroundColor: '#1B4332', color: 'white' }}>
+                                <Check size={12} />
+                              </button>
+                              <button onClick={() => setEditingJournalId(null)} className="p-1 rounded" style={{ backgroundColor: '#DC3545', color: 'white' }}>
+                                <X size={12} />
+                              </button>
+                            </div>
+                          </td>
+                        </>
+                      ) : (
+                        <>
+                          <td className="px-3 py-2">{entry.date}</td>
+                          <td className="px-3 py-2">{entry.description}</td>
+                          <td className="px-3 py-2 text-xs">{entry.debitAccount}</td>
+                          <td className="px-3 py-2 text-right">{formatCurrency(entry.debitAmount)}</td>
+                          <td className="px-3 py-2 text-xs">{entry.creditAccount}</td>
+                          <td className="px-3 py-2 text-right">{formatCurrency(entry.creditAmount)}</td>
+                          <td className="px-3 py-2 text-center">
+                            {documentsPreview[entry.id] && (
+                              <span className="text-xs px-2 py-1 rounded" style={{ backgroundColor: '#E7F5E9', color: '#1B4332' }}>
+                                {documentsPreview[entry.id]?.length || 0}
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-3 py-2 text-center">
+                            <button
+                              onClick={() => startEditJournal(entry.id)}
+                              className="p-1 rounded"
+                              style={{ backgroundColor: '#FFB703', color: '#212529' }}
+                            >
+                              <Pencil size={12} />
+                            </button>
+                          </td>
+                        </>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
+      )}
+
+      {selectedTab === 'coa' && (
+        <div className="bg-white rounded-lg border p-6" style={{ borderColor: '#DEE2E6' }}>
+          <h2 className="text-base mb-4" style={{ color: '#1B4332' }}>
+            Kelola Chart of Accounts (COA)
+          </h2>
+
+          <div className="mb-6 p-4 rounded-lg" style={{ backgroundColor: '#F8F9FA' }}>
+            <h3 className="text-sm mb-3" style={{ color: '#1B4332' }}>Tambah Akun Baru</h3>
+            <div className="grid grid-cols-5 gap-3">
+              <input
+                type="text"
+                placeholder="Kode (1-1200)"
+                value={newAccount.code}
+                onChange={(e) => setNewAccount({ ...newAccount, code: e.target.value })}
+                className="px-3 py-2 border rounded text-sm"
+                style={{ borderColor: '#DEE2E6' }}
+              />
+              <input
+                type="text"
+                placeholder="Nama akun"
+                value={newAccount.name}
+                onChange={(e) => setNewAccount({ ...newAccount, name: e.target.value })}
+                className="px-3 py-2 border rounded text-sm"
+                style={{ borderColor: '#DEE2E6' }}
+              />
+              <select
+                value={newAccount.parentCode}
+                onChange={(e) => setNewAccount({ ...newAccount, parentCode: e.target.value })}
+                className="px-3 py-2 border rounded text-sm"
+                style={{ borderColor: '#DEE2E6' }}
+              >
+                <option value="">Tidak ada parent</option>
+                {chartOfAccounts.filter(a => !a.parentCode).map(a => (
+                  <option key={a.code} value={a.code}>{a.code} - {a.name}</option>
+                ))}
+              </select>
+              <select
+                value={newAccount.category}
+                onChange={(e) => setNewAccount({ ...newAccount, category: e.target.value as any })}
+                className="px-3 py-2 border rounded text-sm"
+                style={{ borderColor: '#DEE2E6' }}
+              >
+                <option value="asset">Asset</option>
+                <option value="liability">Liability</option>
+                <option value="equity">Equity</option>
+                <option value="revenue">Revenue</option>
+                <option value="expense">Expense</option>
+              </select>
+              <button
+                onClick={handleAddAccount}
+                className="px-4 py-2 rounded text-white text-sm"
+                style={{ backgroundColor: '#1B4332' }}
+              >
+                Tambah
+              </button>
             </div>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm mb-2" style={{ color: '#495057' }}>Tanggal</label>
-                <input
-                  type="date"
-                  value={formData.date}
-                  onChange={(e) => setFormData({ ...formData, date: e.target.value })}
-                  className="w-full px-3 py-2 border rounded"
-                  style={{ borderColor: '#DEE2E6' }}
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-sm mb-2" style={{ color: '#495057' }}>Deskripsi</label>
-                <input
-                  type="text"
-                  value={formData.description}
-                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                  className="w-full px-3 py-2 border rounded"
-                  style={{ borderColor: '#DEE2E6' }}
-                  required
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-6">
-              <div className="p-4 rounded-lg" style={{ backgroundColor: '#E7F5E9' }}>
-                <h3 className="text-sm mb-3" style={{ color: '#1B4332' }}>Sisi Debit</h3>
-                <div className="space-y-3">
-                  <div>
-                    <label className="block text-xs mb-1" style={{ color: '#495057' }}>Akun</label>
-                    <select
-                      value={formData.debitAccount}
-                      onChange={(e) => setFormData({ ...formData, debitAccount: e.target.value })}
-                      className="w-full px-3 py-2 border rounded text-sm"
-                      style={{ borderColor: '#DEE2E6' }}
-                      required
-                    >
-                      <option value="">Pilih Akun</option>
-                      {chartOfAccounts.map((acc) => (
-                        <option key={acc.code} value={accountToValue(acc)}>
-                          {acc.code} - {acc.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  {formData.debitAccount.includes('Aset Biologis') && (
-                    <div>
-                      <label className="block text-xs mb-1" style={{ color: '#495057' }}>ID Tag Domba/Kambing</label>
-                      <select
-                        value={formData.debitAssetId}
-                        onChange={(e) => setFormData({ ...formData, debitAssetId: e.target.value })}
-                        className="w-full px-3 py-2 border rounded text-sm"
-                        style={{ borderColor: '#DEE2E6' }}
-                      >
-                        <option value="">Tidak Spesifik</option>
-                        {biologicalAssets.map((asset) => (
-                          <option key={asset.id} value={asset.id}>
-                            {asset.tagId} - {asset.type}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
-                  <div>
-                    <label className="block text-xs mb-1" style={{ color: '#495057' }}>Jumlah</label>
-                    <input
-                      type="number"
-                      value={formData.debitAmount}
-                      onChange={(e) => setFormData({ ...formData, debitAmount: e.target.value })}
-                      className="w-full px-3 py-2 border rounded text-sm"
-                      style={{ borderColor: '#DEE2E6' }}
-                      required
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div className="p-4 rounded-lg" style={{ backgroundColor: '#FFF3CD' }}>
-                <h3 className="text-sm mb-3" style={{ color: '#856404' }}>Sisi Kredit</h3>
-                <div className="space-y-3">
-                  <div>
-                    <label className="block text-xs mb-1" style={{ color: '#495057' }}>Akun</label>
-                    <select
-                      value={formData.creditAccount}
-                      onChange={(e) => setFormData({ ...formData, creditAccount: e.target.value })}
-                      className="w-full px-3 py-2 border rounded text-sm"
-                      style={{ borderColor: '#DEE2E6' }}
-                      required
-                    >
-                      <option value="">Pilih Akun</option>
-                      {chartOfAccounts.map((acc) => (
-                        <option key={acc.code} value={accountToValue(acc)}>
-                          {acc.code} - {acc.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  {formData.creditAccount.includes('Aset Biologis') && (
-                    <div>
-                      <label className="block text-xs mb-1" style={{ color: '#495057' }}>ID Tag Domba/Kambing</label>
-                      <select
-                        value={formData.creditAssetId}
-                        onChange={(e) => setFormData({ ...formData, creditAssetId: e.target.value })}
-                        className="w-full px-3 py-2 border rounded text-sm"
-                        style={{ borderColor: '#DEE2E6' }}
-                      >
-                        <option value="">Tidak Spesifik</option>
-                        {biologicalAssets.map((asset) => (
-                          <option key={asset.id} value={asset.id}>
-                            {asset.tagId} - {asset.type}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
-                  <div>
-                    <label className="block text-xs mb-1" style={{ color: '#495057' }}>Jumlah</label>
-                    <input
-                      type="number"
-                      value={formData.creditAmount}
-                      onChange={(e) => setFormData({ ...formData, creditAmount: e.target.value })}
-                      className="w-full px-3 py-2 border rounded text-sm"
-                      style={{ borderColor: '#DEE2E6' }}
-                      required
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex gap-3">
-              <button
-                type="submit"
-                className="px-4 py-2 rounded text-white transition-opacity hover:opacity-90"
-                style={{ backgroundColor: '#1B4332' }}
-              >
-                Simpan Jurnal
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowForm(false)}
-                className="px-4 py-2 rounded transition-colors"
-                style={{ backgroundColor: '#E9ECEF', color: '#495057' }}
-              >
-                Batal
-              </button>
-            </div>
-          </form>
+          <h3 className="text-sm mb-3" style={{ color: '#1B4332' }}>Daftar Akun Hierarki</h3>
+          <div className="border rounded" style={{ borderColor: '#DEE2E6' }}>
+            {renderCOAHierarchy()}
+          </div>
         </div>
       )}
-
-      <div className="bg-white rounded-lg border overflow-hidden" style={{ borderColor: '#DEE2E6' }}>
-        <div className="p-4 border-b" style={{ borderColor: '#DEE2E6' }}>
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search jurnal (tanggal, deskripsi, akun, nominal...)"
-            className="w-full px-3 py-2 border rounded text-sm"
-            style={{ borderColor: '#DEE2E6' }}
-          />
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr style={{ backgroundColor: '#1B4332', color: 'white' }}>
-                <th className="px-4 py-3 text-left text-sm">Tanggal</th>
-                <th className="px-4 py-3 text-left text-sm">Deskripsi</th>
-                <th className="px-4 py-3 text-left text-sm">Akun Debit</th>
-                <th className="px-4 py-3 text-right text-sm">Debit</th>
-                <th className="px-4 py-3 text-left text-sm">Akun Kredit</th>
-                <th className="px-4 py-3 text-right text-sm">Kredit</th>
-                <th className="px-4 py-3 text-center text-sm">Aksi</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredJournalEntries.map((entry) => (
-                <tr
-                  key={entry.id}
-                  className="border-b transition-colors hover:bg-gray-50"
-                  style={{ borderColor: '#DEE2E6' }}
-                >
-                  {editingJournalId === entry.id ? (
-                    <>
-                      <td className="px-4 py-3">
-                        <input
-                          type="date"
-                          value={editFormData.date}
-                          onChange={(e) => setEditFormData({ ...editFormData, date: e.target.value })}
-                          className="w-full px-2 py-1 border rounded text-sm"
-                          style={{ borderColor: '#DEE2E6' }}
-                        />
-                      </td>
-                      <td className="px-4 py-3">
-                        <input
-                          type="text"
-                          value={editFormData.description}
-                          onChange={(e) => setEditFormData({ ...editFormData, description: e.target.value })}
-                          className="w-full px-2 py-1 border rounded text-sm"
-                          style={{ borderColor: '#DEE2E6' }}
-                        />
-                      </td>
-                      <td className="px-4 py-3">
-                        <select
-                          value={editFormData.debitAccount}
-                          onChange={(e) => setEditFormData({ ...editFormData, debitAccount: e.target.value })}
-                          className="w-full px-2 py-1 border rounded text-sm"
-                          style={{ borderColor: '#DEE2E6' }}
-                        >
-                          {chartOfAccounts.map((acc) => (
-                            <option key={acc.code} value={accountToValue(acc)}>
-                              {acc.code} - {acc.name}
-                            </option>
-                          ))}
-                        </select>
-                      </td>
-                      <td className="px-4 py-3">
-                        <input
-                          type="number"
-                          value={editFormData.debitAmount}
-                          onChange={(e) => setEditFormData({ ...editFormData, debitAmount: e.target.value })}
-                          className="w-full px-2 py-1 border rounded text-sm text-right"
-                          style={{ borderColor: '#DEE2E6' }}
-                        />
-                      </td>
-                      <td className="px-4 py-3">
-                        <select
-                          value={editFormData.creditAccount}
-                          onChange={(e) => setEditFormData({ ...editFormData, creditAccount: e.target.value })}
-                          className="w-full px-2 py-1 border rounded text-sm"
-                          style={{ borderColor: '#DEE2E6' }}
-                        >
-                          {chartOfAccounts.map((acc) => (
-                            <option key={acc.code} value={accountToValue(acc)}>
-                              {acc.code} - {acc.name}
-                            </option>
-                          ))}
-                        </select>
-                      </td>
-                      <td className="px-4 py-3">
-                        <input
-                          type="number"
-                          value={editFormData.creditAmount}
-                          onChange={(e) => setEditFormData({ ...editFormData, creditAmount: e.target.value })}
-                          className="w-full px-2 py-1 border rounded text-sm text-right"
-                          style={{ borderColor: '#DEE2E6' }}
-                        />
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center justify-center gap-2">
-                          <button onClick={saveEditJournal} className="p-1.5 rounded" style={{ backgroundColor: '#1B4332', color: 'white' }}>
-                            <Check size={14} />
-                          </button>
-                          <button onClick={cancelEditJournal} className="p-1.5 rounded" style={{ backgroundColor: '#DC3545', color: 'white' }}>
-                            <X size={14} />
-                          </button>
-                        </div>
-                      </td>
-                    </>
-                  ) : (
-                    <>
-                      <td className="px-4 py-3 text-sm" style={{ color: '#495057' }}>{entry.date}</td>
-                      <td className="px-4 py-3 text-sm" style={{ color: '#212529' }}>{entry.description}</td>
-                      <td className="px-4 py-3 text-sm" style={{ color: '#1B4332' }}>{entry.debitAccount}</td>
-                      <td className="px-4 py-3 text-sm text-right" style={{ color: '#212529' }}>
-                        {formatCurrency(entry.debitAmount)}
-                      </td>
-                      <td className="px-4 py-3 text-sm" style={{ color: '#856404' }}>{entry.creditAccount}</td>
-                      <td className="px-4 py-3 text-sm text-right" style={{ color: '#212529' }}>
-                        {formatCurrency(entry.creditAmount)}
-                      </td>
-                      <td className="px-4 py-3 text-center">
-                        <button
-                          onClick={() => startEditJournal(entry.id)}
-                          className="p-1.5 rounded"
-                          style={{ backgroundColor: '#FFB703', color: '#212529' }}
-                        >
-                          <Pencil size={14} />
-                        </button>
-                      </td>
-                    </>
-                  )}
-                </tr>
-              ))}
-              {filteredJournalEntries.length === 0 && (
-                <tr>
-                  <td colSpan={7} className="px-4 py-6 text-center text-sm" style={{ color: '#6C757D' }}>
-                    Tidak ada data yang cocok dengan pencarian.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
     </div>
   );
 }
