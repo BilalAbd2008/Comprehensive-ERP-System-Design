@@ -7,9 +7,13 @@ import {
   printReport,
   copyToClipboard,
 } from "../utils/reportPrinter";
+import {
+  calculateProfitLossSummary,
+  createBalanceReader,
+} from "../utils/financialCalculations";
 
 export default function ProfitLoss() {
-  const { journalEntries } = useData();
+  const { journalEntries, chartOfAccounts, biologicalAssets } = useData();
   const [isLoadingPDF, setIsLoadingPDF] = useState(false);
 
   const formatCurrency = (value: number) => {
@@ -21,72 +25,35 @@ export default function ProfitLoss() {
   };
 
   const calculateProfitLoss = () => {
-    let pendapatanPenjualan = 0;
-    let keuntunganNilaiWajar = 0;
-    let pendapatanLain = 0;
-    let hpp = 0;
-    let bebanGaji = 0;
-    let bebanPakan = 0;
-    let bebanPenyusutan = 0;
-    let kerugianNilaiWajar = 0;
-    let bebanLain = 0;
+    const summary = calculateProfitLossSummary(
+      journalEntries,
+      chartOfAccounts,
+      biologicalAssets,
+    );
 
-    journalEntries.forEach((entry) => {
-      if (entry.creditAccount.includes("Pendapatan Penjualan")) {
-        pendapatanPenjualan += entry.creditAmount;
-      }
-      if (entry.creditAccount.includes("Keuntungan Nilai Wajar")) {
-        keuntunganNilaiWajar += entry.creditAmount;
-      }
-      if (entry.creditAccount.includes("Pendapatan Lain-lain")) {
-        pendapatanLain += entry.creditAmount;
-      }
-      if (entry.debitAccount.includes("Harga Pokok Penjualan")) {
-        hpp += entry.debitAmount;
-      }
-      if (entry.debitAccount.includes("Beban Gaji")) {
-        bebanGaji += entry.debitAmount;
-      }
-      if (entry.debitAccount.includes("Beban Pakan")) {
-        bebanPakan += entry.debitAmount;
-      }
-      if (entry.debitAccount.includes("Beban Penyusutan")) {
-        bebanPenyusutan += entry.debitAmount;
-      }
-      if (entry.debitAccount.includes("Kerugian Nilai Wajar")) {
-        kerugianNilaiWajar += entry.debitAmount;
-      }
-      if (entry.debitAccount.includes("Beban Lain-lain")) {
-        bebanLain += entry.debitAmount;
-      }
-    });
-
-    const labaKotor = pendapatanPenjualan - hpp;
-    const totalBebanOperasional = bebanGaji + bebanPakan + bebanPenyusutan;
-    const labaOperasional = labaKotor - totalBebanOperasional;
-    const totalOIOE =
-      keuntunganNilaiWajar + pendapatanLain - kerugianNilaiWajar - bebanLain;
-    const labaBersih = labaOperasional + totalOIOE;
+    const totalBebanOperasional =
+      summary.bebanGaji + summary.bebanPakan + summary.bebanPenyusutan;
 
     return {
-      pendapatanPenjualan,
-      hpp,
-      labaKotor,
-      bebanGaji,
-      bebanPakan,
-      bebanPenyusutan,
+      pendapatanPenjualan: summary.pendapatanPenjualan,
+      hpp: summary.hpp,
+      labaKotor: summary.labaKotor,
+      bebanGaji: summary.bebanGaji,
+      bebanPakan: summary.bebanPakan,
+      bebanPenyusutan: summary.bebanPenyusutan,
       totalBebanOperasional,
-      labaOperasional,
-      keuntunganNilaiWajar,
-      pendapatanLain,
-      kerugianNilaiWajar,
-      bebanLain,
-      totalOIOE,
-      labaBersih,
+      labaOperasional: summary.labaUsaha,
+      keuntunganNilaiWajar: summary.keuntunganNilaiWajar,
+      pendapatanLain: summary.pendapatanLain,
+      kerugianNilaiWajar: summary.kerugianNilaiWajar,
+      bebanLain: summary.bebanLain,
+      totalOIOE: summary.jumlahPendapatanBebanLainLain,
+      labaBersih: summary.labaBersih,
     };
   };
 
   const pl = calculateProfitLoss();
+  const { accountLabel } = createBalanceReader(journalEntries, chartOfAccounts);
 
   const handleDownloadPDF = async () => {
     setIsLoadingPDF(true);
@@ -199,7 +166,7 @@ export default function ProfitLoss() {
             <div>
               <div className="flex justify-between items-center py-2">
                 <span className="text-sm" style={{ color: "#1B4332" }}>
-                  Pendapatan Penjualan
+                  {accountLabel("4-1000", "Pendapatan Penjualan")}
                 </span>
                 <span className="text-sm" style={{ color: "#212529" }}>
                   {formatCurrency(pl.pendapatanPenjualan)}
@@ -210,7 +177,7 @@ export default function ProfitLoss() {
                 style={{ borderColor: "#DEE2E6" }}
               >
                 <span className="text-sm pl-4" style={{ color: "#495057" }}>
-                  Harga Pokok Penjualan
+                  {accountLabel("5-3000", "Harga Pokok Penjualan")}
                 </span>
                 <span className="text-sm" style={{ color: "#495057" }}>
                   ({formatCurrency(pl.hpp)})
@@ -235,7 +202,7 @@ export default function ProfitLoss() {
               </div>
               <div className="flex justify-between items-center py-2 pl-4">
                 <span className="text-sm" style={{ color: "#495057" }}>
-                  Beban Gaji
+                  {accountLabel("5-1000", "Beban Gaji")}
                 </span>
                 <span className="text-sm" style={{ color: "#495057" }}>
                   ({formatCurrency(pl.bebanGaji)})
@@ -246,7 +213,7 @@ export default function ProfitLoss() {
                 style={{ borderColor: "#DEE2E6" }}
               >
                 <span className="text-sm" style={{ color: "#495057" }}>
-                  Beban Pakan
+                  {accountLabel("5-2000", "Beban Pakan")}
                 </span>
                 <span className="text-sm" style={{ color: "#495057" }}>
                   ({formatCurrency(pl.bebanPakan)})
@@ -257,7 +224,7 @@ export default function ProfitLoss() {
                 style={{ borderColor: "#DEE2E6" }}
               >
                 <span className="text-sm" style={{ color: "#495057" }}>
-                  Beban Penyusutan
+                  {accountLabel("5-6000", "Beban Penyusutan")}
                 </span>
                 <span className="text-sm" style={{ color: "#495057" }}>
                   ({formatCurrency(pl.bebanPenyusutan)})
@@ -298,7 +265,7 @@ export default function ProfitLoss() {
                 style={{ backgroundColor: "#FFF3CD" }}
               >
                 <span className="text-sm pl-2" style={{ color: "#856404" }}>
-                  Keuntungan Belum Terealisasi - Selisih Nilai Wajar (PSAK 241)
+                  {accountLabel("4-2000", "Keuntungan Nilai Wajar")} (PSAK 241)
                 </span>
                 <span className="text-sm" style={{ color: "#856404" }}>
                   {formatCurrency(pl.keuntunganNilaiWajar)}
@@ -306,7 +273,7 @@ export default function ProfitLoss() {
               </div>
               <div className="flex justify-between items-center py-2 pl-4">
                 <span className="text-sm" style={{ color: "#495057" }}>
-                  Pendapatan Lain-lain
+                  {accountLabel("4-3000", "Pendapatan Lain-lain")}
                 </span>
                 <span className="text-sm" style={{ color: "#495057" }}>
                   {formatCurrency(pl.pendapatanLain)}
@@ -315,7 +282,7 @@ export default function ProfitLoss() {
               {pl.kerugianNilaiWajar > 0 && (
                 <div className="flex justify-between items-center py-2 pl-4">
                   <span className="text-sm" style={{ color: "#495057" }}>
-                    Kerugian Nilai Wajar
+                    {accountLabel("5-4000", "Kerugian Nilai Wajar")}
                   </span>
                   <span className="text-sm" style={{ color: "#495057" }}>
                     ({formatCurrency(pl.kerugianNilaiWajar)})
@@ -325,7 +292,7 @@ export default function ProfitLoss() {
               {pl.bebanLain > 0 && (
                 <div className="flex justify-between items-center py-2 pl-4">
                   <span className="text-sm" style={{ color: "#495057" }}>
-                    Beban Lain-lain
+                    {accountLabel("5-5000", "Beban Lain-lain")}
                   </span>
                   <span className="text-sm" style={{ color: "#495057" }}>
                     ({formatCurrency(pl.bebanLain)})

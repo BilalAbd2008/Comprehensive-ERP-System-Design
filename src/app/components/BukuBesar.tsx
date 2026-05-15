@@ -63,6 +63,23 @@ function documentLabel(doc: JournalDocument) {
   return `${sideLabel(doc.documentSide)}: ${doc.fileName}`;
 }
 
+function accountGroupLabel(account?: ChartOfAccount) {
+  const name = account?.name.toLowerCase() || "";
+  if (account?.category === "asset" && (name.includes("kas") || name.includes("bank"))) {
+    return "Cash/Bank";
+  }
+
+  const map: Record<ChartOfAccount["category"], string> = {
+    asset: "Asset",
+    liability: "Liability",
+    equity: "Equity",
+    revenue: "Revenue",
+    expense: "Expense",
+  };
+
+  return account ? map[account.category] : "—";
+}
+
 function downloadDocument(doc: JournalDocument) {
   const link = document.createElement("a");
   link.href = doc.fileData;
@@ -73,6 +90,7 @@ function downloadDocument(doc: JournalDocument) {
 export default function BukuBesar() {
   const { journalEntries, chartOfAccounts, getJournalDocuments } = useData();
   const [selectedAccount, setSelectedAccount] = useState<string | null>(null);
+  const [selectedChildAccount, setSelectedChildAccount] = useState<string | null>(null);
   const [downloadFormat, setDownloadFormat] = useState<'csv' | 'excel'>('csv');
   const [previewDocument, setPreviewDocument] = useState<JournalDocument | null>(null);
 
@@ -129,7 +147,8 @@ export default function BukuBesar() {
           date: string;
           description: string;
           entryId: string;
-          sourceAccount: string;
+          chartOfAccount: string;
+          accountGroup: string;
           documents: JournalDocument[];
           debit: number;
           credit: number;
@@ -191,9 +210,19 @@ export default function BukuBesar() {
         const debit = debitBelongs ? entry.debitAmount : 0;
         const credit = creditBelongs ? entry.creditAmount : 0;
         const sourceAccounts = [
-          debitBelongs ? `Debit: ${accountLabel(debitAccount.code, debitAccount.name)}` : "",
-          creditBelongs ? `Kredit: ${accountLabel(creditAccount.code, creditAccount.name)}` : "",
+          debitBelongs ? debitAccount : undefined,
+          creditBelongs ? creditAccount : undefined,
         ].filter(Boolean);
+        const chartOfAccount = sourceAccounts
+          .map((source) => accountLabel(source!.code, source!.name))
+          .join(" / ");
+        const accountGroup = Array.from(
+          new Set(
+            sourceAccounts.map((source) =>
+              accountGroupLabel(coaByCode.get(source!.code)),
+            ),
+          ),
+        ).join(" / ");
 
         // Determine balance direction based on account type (1xxx/5xxx = debit balance, 2/3/4xxx = credit balance)
         const isAssetOrExpense =
@@ -208,7 +237,8 @@ export default function BukuBesar() {
           date: entry.date,
           description: entry.description,
           entryId: entry.id,
-          sourceAccount: sourceAccounts.join(" / "),
+          chartOfAccount,
+          accountGroup,
           documents: getJournalDocuments(entry.id),
           debit,
           credit,
@@ -236,6 +266,13 @@ export default function BukuBesar() {
   const accountList = Object.entries(accountsData).sort(([a], [b]) =>
     a.localeCompare(b),
   );
+  const visibleParentAccountList = accountList.filter(([code]) => {
+    const account = coaByCode.get(code);
+    return !account?.parentCode;
+  });
+
+  const childAccountList = (parentCode: string) =>
+    accountList.filter(([code]) => coaByCode.get(code)?.parentCode === parentCode);
 
   const cell = (v: string | number) =>
     `"${String(v).replace(/"/g, '""')}"`;
@@ -255,7 +292,8 @@ export default function BukuBesar() {
       "Tanggal",
       "No. Referensi",
       "Sumber",
-      "Akun sumber",
+      "Chart of Account",
+      "Account",
       "Deskripsi",
       "Dokumen Pendukung",
       "Debit",
@@ -285,7 +323,8 @@ export default function BukuBesar() {
           cell(trans.date),
           cell(`JU/${trans.entryId}`),
           cell("Jurnal Umum"),
-          cell(trans.sourceAccount || "—"),
+          cell(trans.chartOfAccount || "—"),
+          cell(trans.accountGroup || "—"),
           cell(trans.description),
           cell(trans.documents.map(documentLabel).join("; ") || "—"),
           cell(formatAmountExport(trans.debit)),
@@ -299,6 +338,7 @@ export default function BukuBesar() {
         cell(""),
         cell(account.namaAkun),
         cell(account.kelompok),
+        cell(""),
         cell(""),
         cell(""),
         cell(""),
@@ -358,7 +398,8 @@ export default function BukuBesar() {
       "Tanggal",
       "No. Referensi",
       "Sumber",
-      "Akun sumber",
+      "Chart of Account",
+      "Account",
       "Deskripsi",
       "Dokumen Pendukung",
       "Debit",
@@ -387,7 +428,8 @@ export default function BukuBesar() {
           trans.date,
           `JU/${trans.entryId}`,
           "Jurnal Umum",
-          trans.sourceAccount || "—",
+          trans.chartOfAccount || "—",
+          trans.accountGroup || "—",
           trans.description.replace(/\t/g, " "),
           trans.documents.map(documentLabel).join("; ") || "—",
           formatAmountExport(trans.debit),
@@ -401,6 +443,7 @@ export default function BukuBesar() {
         "",
         account.namaAkun,
         account.kelompok,
+        "",
         "",
         "",
         "",
@@ -488,17 +531,18 @@ export default function BukuBesar() {
         </div>
       </div>
 
-      {accountList.length === 0 && (
+      {visibleParentAccountList.length === 0 && (
         <div className="bg-white p-8 rounded-lg border text-center" style={{ borderColor: '#DEE2E6' }}>
           <p style={{ color: '#6C757D' }}>Belum ada data transaksi untuk ditampilkan</p>
         </div>
       )}
 
       <div className="space-y-4">
-        {accountList.map(([accountCode, account], idx) => {
+        {visibleParentAccountList.map(([accountCode, account], idx) => {
           const isOpen = selectedAccount === accountCode;
           const totalDebit = account.totalDebit;
           const totalCredit = account.totalCredit;
+          const children = childAccountList(accountCode);
           const finalBalance =
             account.transactions.length > 0
               ? account.transactions[account.transactions.length - 1].balance
@@ -567,6 +611,108 @@ export default function BukuBesar() {
               {/* Account Transactions */}
               {isOpen && (
                 <div className="border-t" style={{ borderColor: "#DEE2E6" }}>
+                  {children.length > 0 && (
+                    <div className="p-4 space-y-3" style={{ backgroundColor: "#F8F9FA" }}>
+                      <div className="text-xs font-semibold" style={{ color: "#1B4332" }}>
+                        Sub-akun {account.namaAkun}
+                      </div>
+                      {children.map(([childCode, child]) => {
+                        const childOpen = selectedChildAccount === childCode;
+                        const childFinalBalance =
+                          child.transactions.length > 0
+                            ? child.transactions[child.transactions.length - 1].balance
+                            : 0;
+
+                        return (
+                          <div
+                            key={childCode}
+                            className="bg-white rounded border"
+                            style={{ borderColor: "#DEE2E6" }}
+                          >
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setSelectedChildAccount(childOpen ? null : childCode)
+                              }
+                              className="w-full px-4 py-3 flex items-center justify-between hover:bg-gray-50"
+                            >
+                              <div className="text-left">
+                                <div className="text-sm font-medium" style={{ color: "#1B4332" }}>
+                                  [{child.code}] {child.namaAkun}
+                                </div>
+                                <div className="text-xs mt-0.5" style={{ color: "#6C757D" }}>
+                                  Sub-akun dari {account.namaAkun} ({account.code})
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-5 text-sm">
+                                <div className="text-right">
+                                  <div style={{ color: "#6C757D", fontSize: "0.75rem" }}>Debit</div>
+                                  <div style={{ color: "#495057", fontWeight: "bold" }}>
+                                    {formatCurrency(child.totalDebit)}
+                                  </div>
+                                </div>
+                                <div className="text-right">
+                                  <div style={{ color: "#6C757D", fontSize: "0.75rem" }}>Kredit</div>
+                                  <div style={{ color: "#495057", fontWeight: "bold" }}>
+                                    {formatCurrency(child.totalCredit)}
+                                  </div>
+                                </div>
+                                <div className="text-right min-w-36">
+                                  <div style={{ color: "#6C757D", fontSize: "0.75rem" }}>Saldo</div>
+                                  <div
+                                    style={{
+                                      color: childFinalBalance >= 0 ? "#28A745" : "#DC3545",
+                                      fontWeight: "bold",
+                                    }}
+                                  >
+                                    {formatCurrency(childFinalBalance)}
+                                  </div>
+                                </div>
+                                <ChevronDown
+                                  size={18}
+                                  style={{
+                                    transform: childOpen ? "rotate(180deg)" : "rotate(0deg)",
+                                    transition: "transform 0.2s",
+                                    color: "#1B4332",
+                                  }}
+                                />
+                              </div>
+                            </button>
+
+                            {childOpen && (
+                              <div className="border-t overflow-x-auto" style={{ borderColor: "#DEE2E6" }}>
+                                <table className="w-full text-sm">
+                                  <thead>
+                                    <tr style={{ backgroundColor: "#F8F9FA" }}>
+                                      <th className="px-4 py-2 text-left text-xs" style={{ color: "#495057" }}>Tanggal</th>
+                                      <th className="px-4 py-2 text-left text-xs" style={{ color: "#495057" }}>Transaksi</th>
+                                      <th className="px-4 py-2 text-right text-xs" style={{ color: "#495057" }}>Debit</th>
+                                      <th className="px-4 py-2 text-right text-xs" style={{ color: "#495057" }}>Kredit</th>
+                                      <th className="px-4 py-2 text-right text-xs" style={{ color: "#495057" }}>Saldo</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {child.transactions.map((trans, tIdx) => (
+                                      <tr key={tIdx} className="border-b" style={{ borderColor: "#DEE2E6" }}>
+                                        <td className="px-4 py-2 whitespace-nowrap">{new Date(trans.date).toLocaleDateString("id-ID")}</td>
+                                        <td className="px-4 py-2" style={{ color: "#495057" }}>{trans.description}</td>
+                                        <td className="px-4 py-2 text-right">{trans.debit > 0 ? formatCurrency(trans.debit) : "-"}</td>
+                                        <td className="px-4 py-2 text-right">{trans.credit > 0 ? formatCurrency(trans.credit) : "-"}</td>
+                                        <td className="px-4 py-2 text-right font-semibold" style={{ color: trans.balance >= 0 ? "#28A745" : "#DC3545" }}>
+                                          {formatCurrency(trans.balance)}
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
                   <table className="w-full text-sm">
                     <thead>
                       <tr style={{ backgroundColor: "#F8F9FA" }}>
@@ -586,7 +732,13 @@ export default function BukuBesar() {
                           className="px-6 py-3 text-left text-xs font-semibold"
                           style={{ color: "#495057" }}
                         >
-                          Akun Sumber
+                          Chart of Account
+                        </th>
+                        <th
+                          className="px-6 py-3 text-left text-xs font-semibold"
+                          style={{ color: "#495057" }}
+                        >
+                          Account
                         </th>
                         <th
                           className="px-6 py-3 text-left text-xs font-semibold"
@@ -637,7 +789,13 @@ export default function BukuBesar() {
                             className="px-6 py-3 text-xs"
                             style={{ color: "#495057" }}
                           >
-                            {trans.sourceAccount || "-"}
+                            {trans.chartOfAccount || "-"}
+                          </td>
+                          <td
+                            className="px-6 py-3 text-xs"
+                            style={{ color: "#495057" }}
+                          >
+                            {trans.accountGroup || "-"}
                           </td>
                           <td
                             className="px-6 py-3 text-xs"
@@ -690,7 +848,7 @@ export default function BukuBesar() {
                       ))}
                       <tr style={{ backgroundColor: "#F8F9FA" }}>
                         <td
-                          colSpan={4}
+                          colSpan={5}
                           className="px-6 py-3 text-sm font-semibold"
                           style={{ color: "#1B4332" }}
                         >
@@ -725,7 +883,7 @@ export default function BukuBesar() {
       </div>
 
       {/* Summary Section */}
-      {accountList.length > 0 && (
+      {visibleParentAccountList.length > 0 && (
         <div className="mt-8 bg-white p-6 rounded-lg border" style={{ borderColor: "#DEE2E6" }}>
           <h2 className="text-base mb-4 font-semibold" style={{ color: "#1B4332" }}>
             Ringkasan Akun
@@ -744,7 +902,7 @@ export default function BukuBesar() {
                 </tr>
               </thead>
               <tbody>
-                {accountList.map(([accountCode, account]) => {
+                {visibleParentAccountList.map(([accountCode, account]) => {
                   const finalBalance = account.transactions.length > 0
                     ? account.transactions[account.transactions.length - 1].balance
                     : 0;

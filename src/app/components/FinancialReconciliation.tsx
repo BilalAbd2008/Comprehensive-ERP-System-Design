@@ -1,7 +1,11 @@
 import { useData } from '../context/DataContext';
+import {
+  calculateProfitLossSummary,
+  createBalanceReader,
+} from '../utils/financialCalculations';
 
 export default function FinancialReconciliation() {
-  const { journalEntries, biologicalAssets } = useData();
+  const { journalEntries, biologicalAssets, chartOfAccounts } = useData();
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('id-ID', {
@@ -11,49 +15,59 @@ export default function FinancialReconciliation() {
     }).format(value);
   };
 
-  // Calculate P&L
-  let pendapatanPenjualan = 0;
-  let keuntunganNilaiWajar = 0;
-  let pendapatanLain = 0;
-  let hpp = 0;
-  let bebanGaji = 0;
-  let bebanPakan = 0;
-  let bebanPenyusutan = 0;
-  let bebanLain = 0;
+  const {
+    pendapatanPenjualan,
+    keuntunganNilaiWajar,
+    pendapatanLain,
+    hpp,
+    bebanGaji,
+    bebanPakan,
+    bebanPenyusutan,
+    bebanLain,
+    labaBersih,
+  } = calculateProfitLossSummary(journalEntries, chartOfAccounts, biologicalAssets);
+  const { balanceIncludingChildren, creditBalance, topAccountsByCategory } = createBalanceReader(
+    journalEntries,
+    chartOfAccounts,
+  );
 
-  journalEntries.forEach(entry => {
-    if (entry.creditAccount.includes('Pendapatan Penjualan')) pendapatanPenjualan += entry.creditAmount;
-    if (entry.creditAccount.includes('Keuntungan Nilai Wajar')) keuntunganNilaiWajar += entry.creditAmount;
-    if (entry.creditAccount.includes('Pendapatan Lain-lain')) pendapatanLain += entry.creditAmount;
-    if (entry.debitAccount.includes('Harga Pokok Penjualan')) hpp += entry.debitAmount;
-    if (entry.debitAccount.includes('Beban Gaji')) bebanGaji += entry.debitAmount;
-    if (entry.debitAccount.includes('Beban Pakan')) bebanPakan += entry.debitAmount;
-    if (entry.debitAccount.includes('Beban Penyusutan')) bebanPenyusutan += entry.debitAmount;
-    if (entry.debitAccount.includes('Beban Lain-lain')) bebanLain += entry.debitAmount;
-  });
+  const totalAsetBiologis = biologicalAssets.reduce(
+    (sum, asset) => sum + Number(asset.fairValue || 0),
+    0,
+  );
+  const totalKas = balanceIncludingChildren('1-1100');
+  const modalDisetor = creditBalance('3-1000');
+  const totalAsetLancar = topAccountsByCategory('asset')
+    .filter(
+      (account) =>
+        (account.code.startsWith('1-1') || account.code.startsWith('1-2')) &&
+        !account.code.startsWith('1-3000'),
+    )
+    .reduce((sum, account) => sum + balanceIncludingChildren(account.code), 0);
+  const isAccumulatedDepreciation = (account: { code: string; name: string }) =>
+    account.code.startsWith('1-42') ||
+    account.name.toLowerCase().includes('akumulasi') ||
+    account.name.toLowerCase().includes('penyusutan');
+  const totalAsetTetap = topAccountsByCategory('asset')
+    .filter(
+      (account) =>
+        account.code.startsWith('1-4') && !isAccumulatedDepreciation(account),
+    )
+    .reduce((sum, account) => sum + balanceIncludingChildren(account.code), 0);
+  const totalAkumulasiPenyusutan = topAccountsByCategory('asset')
+    .filter(
+      (account) =>
+        account.code.startsWith('1-4') && isAccumulatedDepreciation(account),
+    )
+    .reduce((sum, account) => sum + Math.abs(balanceIncludingChildren(account.code)), 0);
 
-  const labaBersih = pendapatanPenjualan + keuntunganNilaiWajar + pendapatanLain - hpp - bebanGaji - bebanPakan - bebanPenyusutan - bebanLain;
+  const totalAset =
+    totalAsetLancar +
+    totalAsetBiologis +
+    totalAsetTetap -
+    totalAkumulasiPenyusutan;
 
-  // Calculate Balance Sheet
-  const balances: Record<string, number> = {};
-  journalEntries.forEach(entry => {
-    if (!balances[entry.debitAccount]) balances[entry.debitAccount] = 0;
-    if (!balances[entry.creditAccount]) balances[entry.creditAccount] = 0;
-    balances[entry.debitAccount] += entry.debitAmount;
-    balances[entry.creditAccount] -= entry.creditAmount;
-  });
-
-  const totalAsetBiologis = balances['1-3000 Aset Biologis'] || 0;
-  const totalKas = balances['1-1100 Kas'] || 0;
-  const modalDisetor = Math.abs(balances['3-1000 Modal Disetor'] || 0);
-
-  const totalAset = Object.entries(balances)
-    .filter(([acc]) => acc.startsWith('1-'))
-    .reduce((sum, [, val]) => sum + Math.max(0, val), 0);
-
-  const totalLiabilitas = Object.entries(balances)
-    .filter(([acc]) => acc.startsWith('2-'))
-    .reduce((sum, [, val]) => sum + Math.abs(Math.min(0, val)), 0);
+  const totalLiabilitas = creditBalance('2-1000');
 
   const totalEkuitas = modalDisetor + labaBersih;
   const totalLiabilitasEkuitas = totalLiabilitas + totalEkuitas;

@@ -1,7 +1,11 @@
 import { useData } from '../context/DataContext';
+import {
+  calculateProfitLossSummary,
+  createBalanceReader,
+} from '../utils/financialCalculations';
 
 export default function WorkingProfitLoss() {
-  const { journalEntries } = useData();
+  const { journalEntries, chartOfAccounts, biologicalAssets } = useData();
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('id-ID', {
@@ -11,34 +15,24 @@ export default function WorkingProfitLoss() {
     }).format(value);
   };
 
-  // Calculate from GL
-  let pendapatanPenjualan = 0;
-  let keuntunganNilaiWajar = 0;
-  let pendapatanLain = 0;
-  let hpp = 0;
-  let bebanGaji = 0;
-  let bebanPakan = 0;
-  let bebanPenyusutan = 0;
-  let bebanLain = 0;
-
-  journalEntries.forEach(entry => {
-    if (entry.creditAccount.includes('Pendapatan Penjualan')) pendapatanPenjualan += entry.creditAmount;
-    if (entry.creditAccount.includes('Keuntungan Nilai Wajar')) keuntunganNilaiWajar += entry.creditAmount;
-    if (entry.creditAccount.includes('Pendapatan Lain-lain')) pendapatanLain += entry.creditAmount;
-    if (entry.debitAccount.includes('Harga Pokok Penjualan')) hpp += entry.debitAmount;
-    if (entry.debitAccount.includes('Beban Gaji')) bebanGaji += entry.debitAmount;
-    if (entry.debitAccount.includes('Beban Pakan')) bebanPakan += entry.debitAmount;
-    if (entry.debitAccount.includes('Beban Penyusutan')) bebanPenyusutan += entry.debitAmount;
-    if (entry.debitAccount.includes('Beban Lain-lain')) bebanLain += entry.debitAmount;
-  });
-
-  const jumlahPendapatanUsaha = pendapatanPenjualan + keuntunganNilaiWajar + pendapatanLain;
-  const jumlahBebanPokokPendapatan = hpp;
-  const labaKotor = pendapatanPenjualan - hpp;
-  const jumlahBebanUsaha = bebanGaji + bebanPakan + bebanPenyusutan;
-  const labaUsaha = labaKotor - jumlahBebanUsaha;
-  const jumlahPendapatanBebanLainLain = keuntunganNilaiWajar + pendapatanLain - bebanLain;
-  const labaBersih = labaUsaha + jumlahPendapatanBebanLainLain;
+  const {
+    pendapatanPenjualan,
+    keuntunganNilaiWajar,
+    pendapatanLain,
+    bebanGaji,
+    bebanPakan,
+    bebanPenyusutan,
+    kerugianNilaiWajar,
+    bebanLain,
+    jumlahPendapatanUsaha,
+    jumlahBebanPokokPendapatan,
+    labaKotor,
+    jumlahBebanUsaha,
+    labaUsaha,
+    jumlahPendapatanBebanLainLain,
+    labaBersih,
+  } = calculateProfitLossSummary(journalEntries, chartOfAccounts, biologicalAssets);
+  const { accountLabel } = createBalanceReader(journalEntries, chartOfAccounts);
 
   return (
     <div className="p-8">
@@ -73,7 +67,7 @@ export default function WorkingProfitLoss() {
                   <span></span>
                 </div>
                 <div className="grid grid-cols-2 pl-4 py-1">
-                  <span className="text-sm" style={{ color: '#6C757D' }}>Penjualan Ternak (Kurban & Aqiqah)</span>
+                  <span className="text-sm" style={{ color: '#6C757D' }}>{accountLabel('4-1000', 'Penjualan Ternak')}</span>
                   <span className="text-sm text-right" style={{ color: '#212529' }}>
                     {formatCurrency(pendapatanPenjualan)}
                   </span>
@@ -82,7 +76,7 @@ export default function WorkingProfitLoss() {
 
               <div className="py-2">
                 <div className="grid grid-cols-2 pl-4 py-1 rounded" style={{ backgroundColor: '#FFF3CD' }}>
-                  <span className="text-sm" style={{ color: '#856404' }}>Keuntungan Perubahan Nilai Wajar (PSAK 241)</span>
+                  <span className="text-sm" style={{ color: '#856404' }}>{accountLabel('4-2000', 'Keuntungan Perubahan Nilai Wajar')} (PSAK 241)</span>
                   <span className="text-sm text-right" style={{ color: '#856404' }}>
                     {formatCurrency(keuntunganNilaiWajar)}
                   </span>
@@ -95,7 +89,7 @@ export default function WorkingProfitLoss() {
                   <span></span>
                 </div>
                 <div className="grid grid-cols-2 pl-4 py-1">
-                  <span className="text-sm" style={{ color: '#6C757D' }}>Penjualan Kotoran, Sewa Kandang, dll</span>
+                  <span className="text-sm" style={{ color: '#6C757D' }}>{accountLabel('4-3000', 'Pendapatan Lain-lain')}</span>
                   <span className="text-sm text-right" style={{ color: '#212529' }}>
                     {formatCurrency(pendapatanLain)}
                   </span>
@@ -119,7 +113,7 @@ export default function WorkingProfitLoss() {
 
             <div className="space-y-1 pl-6">
               <div className="grid grid-cols-2 py-1">
-                <span className="text-sm" style={{ color: '#6C757D' }}>Harga Pokok Penjualan</span>
+                <span className="text-sm" style={{ color: '#6C757D' }}>{accountLabel('5-3000', 'Harga Pokok Penjualan')}</span>
                 <span className="text-sm text-right" style={{ color: '#212529' }}>
                   {formatCurrency(jumlahBebanPokokPendapatan)}
                 </span>
@@ -150,19 +144,19 @@ export default function WorkingProfitLoss() {
 
             <div className="space-y-1 pl-6">
               <div className="grid grid-cols-2 py-1">
-                <span className="text-sm" style={{ color: '#6C757D' }}>Gaji Karyawan (3 orang)</span>
+                <span className="text-sm" style={{ color: '#6C757D' }}>{accountLabel('5-1000', 'Beban Gaji')}</span>
                 <span className="text-sm text-right" style={{ color: '#212529' }}>
                   {formatCurrency(bebanGaji)}
                 </span>
               </div>
               <div className="grid grid-cols-2 py-1">
-                <span className="text-sm" style={{ color: '#6C757D' }}>Beban Pakan (yang tidak dikapitalisasi)</span>
+                <span className="text-sm" style={{ color: '#6C757D' }}>{accountLabel('5-2000', 'Beban Pakan')}</span>
                 <span className="text-sm text-right" style={{ color: '#212529' }}>
                   {formatCurrency(bebanPakan)}
                 </span>
               </div>
               <div className="grid grid-cols-2 py-1">
-                <span className="text-sm" style={{ color: '#6C757D' }}>Beban Penyusutan</span>
+                <span className="text-sm" style={{ color: '#6C757D' }}>{accountLabel('5-6000', 'Beban Penyusutan')}</span>
                 <span className="text-sm text-right" style={{ color: '#212529' }}>
                   {formatCurrency(bebanPenyusutan)}
                 </span>
@@ -193,19 +187,27 @@ export default function WorkingProfitLoss() {
 
             <div className="space-y-1 pl-6">
               <div className="grid grid-cols-2 py-1 px-2 rounded" style={{ backgroundColor: '#FFF3CD' }}>
-                <span className="text-sm" style={{ color: '#856404' }}>Keuntungan Perubahan Nilai Wajar (PSAK 241)</span>
+                <span className="text-sm" style={{ color: '#856404' }}>{accountLabel('4-2000', 'Keuntungan Perubahan Nilai Wajar')} (PSAK 241)</span>
                 <span className="text-sm text-right" style={{ color: '#856404' }}>
                   {formatCurrency(keuntunganNilaiWajar)}
                 </span>
               </div>
+              {kerugianNilaiWajar > 0 && (
+                <div className="grid grid-cols-2 py-1">
+                  <span className="text-sm" style={{ color: '#6C757D' }}>{accountLabel('5-4000', 'Kerugian Nilai Wajar')}</span>
+                  <span className="text-sm text-right" style={{ color: '#DC3545' }}>
+                    ({formatCurrency(kerugianNilaiWajar)})
+                  </span>
+                </div>
+              )}
               <div className="grid grid-cols-2 py-1">
-                <span className="text-sm" style={{ color: '#6C757D' }}>Pendapatan Lain (Kotoran, Sewa)</span>
+                <span className="text-sm" style={{ color: '#6C757D' }}>{accountLabel('4-3000', 'Pendapatan Lain-lain')}</span>
                 <span className="text-sm text-right" style={{ color: '#212529' }}>
                   {formatCurrency(pendapatanLain)}
                 </span>
               </div>
               <div className="grid grid-cols-2 py-1">
-                <span className="text-sm" style={{ color: '#6C757D' }}>Beban Lain (Pemeliharaan, Pengobatan)</span>
+                <span className="text-sm" style={{ color: '#6C757D' }}>{accountLabel('5-5000', 'Beban Lain-lain')}</span>
                 <span className="text-sm text-right" style={{ color: '#DC3545' }}>
                   {bebanLain > 0 ? `(${formatCurrency(bebanLain)})` : '-'}
                 </span>

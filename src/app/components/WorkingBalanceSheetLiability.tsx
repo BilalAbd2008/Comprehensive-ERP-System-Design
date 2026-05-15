@@ -1,7 +1,11 @@
 import { useData } from '../context/DataContext';
+import {
+  calculateProfitLossSummary,
+  createBalanceReader,
+} from '../utils/financialCalculations';
 
 export default function WorkingBalanceSheetLiability() {
-  const { journalEntries } = useData();
+  const { journalEntries, chartOfAccounts, biologicalAssets } = useData();
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('id-ID', {
@@ -11,44 +15,33 @@ export default function WorkingBalanceSheetLiability() {
     }).format(value);
   };
 
-  // Calculate balances from GL
-  const balances: Record<string, number> = {};
-  journalEntries.forEach(entry => {
-    if (!balances[entry.debitAccount]) balances[entry.debitAccount] = 0;
-    if (!balances[entry.creditAccount]) balances[entry.creditAccount] = 0;
-    balances[entry.debitAccount] += entry.debitAmount;
-    balances[entry.creditAccount] -= entry.creditAmount;
-  });
+  const {
+    childrenOf,
+    topAccountsByCategory,
+    creditBalance,
+  } = createBalanceReader(journalEntries, chartOfAccounts);
+  const { labaBersih: labaTahunBerjalan } = calculateProfitLossSummary(
+    journalEntries,
+    chartOfAccounts,
+    biologicalAssets,
+  );
 
-  // Calculate P&L for Laba Ditahan
-  let pendapatan = 0;
-  let keuntunganNilaiWajar = 0;
-  let pendapatanLain = 0;
-  let hpp = 0;
-  let bebanGaji = 0;
-  let bebanPakan = 0;
-  let bebanPenyusutan = 0;
-  let bebanLain = 0;
-
-  journalEntries.forEach(entry => {
-    if (entry.creditAccount.includes('Pendapatan Penjualan')) pendapatan += entry.creditAmount;
-    if (entry.creditAccount.includes('Keuntungan Nilai Wajar')) keuntunganNilaiWajar += entry.creditAmount;
-    if (entry.creditAccount.includes('Pendapatan Lain-lain')) pendapatanLain += entry.creditAmount;
-    if (entry.debitAccount.includes('HPP')) hpp += entry.debitAmount;
-    if (entry.debitAccount.includes('Beban Gaji')) bebanGaji += entry.debitAmount;
-    if (entry.debitAccount.includes('Beban Pakan')) bebanPakan += entry.debitAmount;
-    if (entry.debitAccount.includes('Beban Penyusutan')) bebanPenyusutan += entry.debitAmount;
-    if (entry.debitAccount.includes('Beban Lain-lain')) bebanLain += entry.debitAmount;
-  });
-
-  const labaTahunBerjalan = pendapatan + keuntunganNilaiWajar + pendapatanLain - hpp - bebanGaji - bebanPakan - bebanPenyusutan - bebanLain;
+  const liabilityAccounts = topAccountsByCategory('liability');
+  const equityCapitalAccounts = topAccountsByCategory('equity').filter(
+    (account) => account.code !== '3-2000',
+  );
 
   // LIABILITAS
-  const hutangUsaha = Math.abs(balances['2-1000 Hutang Usaha'] || 0);
-  const totalLiabilitas = hutangUsaha;
+  const totalLiabilitas = liabilityAccounts.reduce(
+    (sum, account) => sum + creditBalance(account.code),
+    0,
+  );
 
   // EKUITAS
-  const modalDisetor = Math.abs(balances['3-1000 Modal Disetor'] || 0);
+  const modalDisetor = equityCapitalAccounts.reduce(
+    (sum, account) => sum + creditBalance(account.code),
+    0,
+  );
   const labaDitahan = labaTahunBerjalan;
   const totalEkuitas = modalDisetor + labaDitahan;
 
@@ -88,18 +81,48 @@ export default function WorkingBalanceSheetLiability() {
                 </div>
 
                 <div className="pl-4">
-                  <div className="grid grid-cols-2 py-1">
-                    <span className="text-sm" style={{ color: '#6C757D' }}>Hutang Usaha</span>
-                    <span className="text-sm text-right" style={{ color: '#212529' }}>
-                      {hutangUsaha > 0 ? formatCurrency(hutangUsaha) : '-'}
-                    </span>
-                  </div>
+                  {liabilityAccounts.length > 0 ? (
+                    liabilityAccounts.map((account) => {
+                      const parentAmount = creditBalance(account.code);
+                      const children = childrenOf(account.code);
+                      return (
+                        <div key={account.code} className="mb-2">
+                          <div className="grid grid-cols-2 py-1">
+                            <span className="text-sm" style={{ color: '#6C757D' }}>
+                              {account.name}
+                            </span>
+                            <span className="text-sm text-right" style={{ color: '#212529' }}>
+                              {parentAmount > 0 ? formatCurrency(parentAmount) : '-'}
+                            </span>
+                          </div>
+                          {children.map((child) => {
+                            const amount = creditBalance(child.code);
+                            return (
+                              <div key={child.code} className="grid grid-cols-2 pl-4 py-1">
+                                <span className="text-xs" style={{ color: '#6C757D' }}>
+                                  {child.code} - {child.name}
+                                </span>
+                                <span className="text-xs text-right" style={{ color: '#212529' }}>
+                                  {amount > 0 ? formatCurrency(amount) : '-'}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <div className="grid grid-cols-2 py-1">
+                      <span className="text-sm" style={{ color: '#6C757D' }}>Belum ada akun liabilitas</span>
+                      <span className="text-sm text-right" style={{ color: '#212529' }}>-</span>
+                    </div>
+                  )}
                 </div>
 
                 <div className="grid grid-cols-2 pl-4 py-2 border-t mt-2" style={{ borderColor: '#DEE2E6' }}>
                   <span className="text-sm" style={{ color: '#1B4332' }}>Subtotal Liabilitas Jangka Pendek</span>
                   <span className="text-sm text-right" style={{ color: '#1B4332' }}>
-                    {formatCurrency(hutangUsaha)}
+                    {formatCurrency(totalLiabilitas)}
                   </span>
                 </div>
               </div>
@@ -122,17 +145,47 @@ export default function WorkingBalanceSheetLiability() {
             <div className="space-y-1 pl-6">
               <div className="py-2">
                 <div className="grid grid-cols-2 mb-2">
-                  <span className="text-sm" style={{ color: '#495057' }}>Modal Saham</span>
+                  <span className="text-sm" style={{ color: '#495057' }}>Modal & Setoran Pemilik</span>
                   <span></span>
                 </div>
 
                 <div className="pl-4">
-                  <div className="grid grid-cols-2 py-1">
-                    <span className="text-sm" style={{ color: '#6C757D' }}>Modal Disetor</span>
-                    <span className="text-sm text-right" style={{ color: '#212529' }}>
-                      {formatCurrency(modalDisetor)}
-                    </span>
-                  </div>
+                  {equityCapitalAccounts.length > 0 ? (
+                    equityCapitalAccounts.map((account) => {
+                      const parentAmount = creditBalance(account.code);
+                      const children = childrenOf(account.code);
+                      return (
+                        <div key={account.code} className="mb-2">
+                          <div className="grid grid-cols-2 py-1">
+                            <span className="text-sm" style={{ color: '#6C757D' }}>
+                              {account.name}
+                            </span>
+                            <span className="text-sm text-right" style={{ color: '#212529' }}>
+                              {formatCurrency(parentAmount)}
+                            </span>
+                          </div>
+                          {children.map((child) => {
+                            const amount = creditBalance(child.code);
+                            return (
+                              <div key={child.code} className="grid grid-cols-2 pl-4 py-1">
+                                <span className="text-xs" style={{ color: '#6C757D' }}>
+                                  {child.code} - {child.name}
+                                </span>
+                                <span className="text-xs text-right" style={{ color: '#212529' }}>
+                                  {formatCurrency(amount)}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <div className="grid grid-cols-2 py-1">
+                      <span className="text-sm" style={{ color: '#6C757D' }}>Belum ada akun ekuitas</span>
+                      <span className="text-sm text-right" style={{ color: '#212529' }}>-</span>
+                    </div>
+                  )}
                 </div>
               </div>
 

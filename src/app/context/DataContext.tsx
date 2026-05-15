@@ -12,7 +12,7 @@ import { getSimulation2025Bundle } from "../data/simulation2025";
 export interface BiologicalAsset {
   id: string;
   tagId: string;
-  type: "Kambing" | "Domba";
+  type: string;
   age: number;
   ageUpdatedAt?: string;
   weight: number;
@@ -27,7 +27,7 @@ export interface BiologicalAsset {
 export interface ChartOfAccount {
   code: string;
   name: string;
-  parentCode?: string; // Parent untuk akun anak
+  parentCode?: string | null; // Parent untuk akun anak
   category: "asset" | "liability" | "equity" | "revenue" | "expense";
   isActive: boolean;
   createdAt?: string;
@@ -131,6 +131,10 @@ interface DataContextType {
   // Fair Value
   fairValuePerKg: number;
   setFairValuePerKg: (nextValue: number) => Promise<void>;
+  fairValuePerKgByType: Record<string, number>;
+  animalTypes: string[];
+  setFairValuePerKgForType: (type: string, nextValue: number) => Promise<void>;
+  addAnimalType: (type: string, initialFairValuePerKg: number) => Promise<void>;
 
   // Admin Management
   admins: AdminUser[];
@@ -154,7 +158,9 @@ const API_BASE_URL =
   import.meta.env.VITE_API_URL || "http://localhost:3001/api";
 const AUTH_STORAGE_KEY = "hers-farm-authenticated";
 const CURRENT_USER_KEY = "hers-farm-current-user";
+const SIMULATION_MODE_STORAGE_KEY = "hers-farm-simulation-mode";
 const FAIR_VALUE_PER_KG_STORAGE_KEY = "hers-farm-fair-value-per-kg";
+const FAIR_VALUE_BY_TYPE_STORAGE_KEY = "hers-farm-fair-value-by-type";
 const STORAGE_KEY_ASSETS = "hers-farm-assets";
 const STORAGE_KEY_ENTRIES = "hers-farm-entries";
 const STORAGE_KEY_DOCUMENTS = "hers-farm-documents";
@@ -314,6 +320,10 @@ const initialAssets: BiologicalAsset[] = [
 ];
 
 const initialJournalEntries: JournalEntry[] = [];
+const defaultFairValuePerKgByType: Record<string, number> = {
+  Domba: 80000,
+  Kambing: 100000,
+};
 const initialAdmins: AdminUser[] = [
   {
     id: "1",
@@ -388,9 +398,72 @@ function findAccount(
   return account ? formatAccount(account) : `${code} ${fallbackName}`;
 }
 
+function getUniqueAnimalTypes(
+  assets: BiologicalAsset[],
+  priceMap: Record<string, number>,
+) {
+  return Array.from(
+    new Set([
+      ...Object.keys(priceMap),
+      ...assets.map((asset) => asset.type).filter(Boolean),
+    ]),
+  ).sort((a, b) => a.localeCompare(b));
+}
+
+function normalizeFairValueByType(
+  value: unknown,
+  assets: BiologicalAsset[],
+  fallback: number,
+) {
+  if (
+    value &&
+    typeof value === "object" &&
+    Object.keys(value as Record<string, unknown>).length === 0 &&
+    assets.length === 0
+  ) {
+    return {};
+  }
+
+  const source =
+    value && typeof value === "object"
+      ? (value as Record<string, unknown>)
+      : defaultFairValuePerKgByType;
+  const normalized: Record<string, number> = {};
+
+  for (const [type, price] of Object.entries(source)) {
+    const parsed = Number(price);
+    if (type.trim() && Number.isFinite(parsed) && parsed >= 0) {
+      normalized[type.trim()] = parsed;
+    }
+  }
+
+  for (const asset of assets) {
+    if (!asset.type || normalized[asset.type]) continue;
+    const inferred = asset.weight > 0 ? Number(asset.fairValue) / asset.weight : fallback;
+    normalized[asset.type] =
+      Number.isFinite(inferred) && inferred >= 0 ? Math.round(inferred) : fallback;
+  }
+
+  return Object.keys(normalized).length > 0
+    ? normalized
+    : { ...defaultFairValuePerKgByType };
+}
+
 export function DataProvider({ children }: { children: ReactNode }) {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [currentUser, setCurrentUser] = useState<AdminUser | undefined>();
+  const [isAuthenticated, setIsAuthenticated] = useState(
+    () => localStorage.getItem(AUTH_STORAGE_KEY) === "true",
+  );
+  const [currentUser, setCurrentUser] = useState<AdminUser | undefined>(() => {
+    const storedUser = localStorage.getItem(CURRENT_USER_KEY);
+    if (!storedUser) return undefined;
+
+    try {
+      return JSON.parse(storedUser);
+    } catch (error) {
+      localStorage.removeItem(CURRENT_USER_KEY);
+      return undefined;
+    }
+  });
   const [biologicalAssets, setBiologicalAssets] =
     useState<BiologicalAsset[]>(initialAssets);
   const [journalEntries, setJournalEntries] = useState<JournalEntry[]>(
@@ -404,7 +477,14 @@ export function DataProvider({ children }: { children: ReactNode }) {
   );
   const [accountBalances, setAccountBalances] = useState<AccountBalance[]>([]);
   const [fairValuePerKg, setFairValuePerKgState] = useState<number>(100000);
+  const [fairValuePerKgByType, setFairValuePerKgByTypeState] =
+    useState<Record<string, number>>(defaultFairValuePerKgByType);
   const [admins, setAdmins] = useState<AdminUser[]>(initialAdmins);
+  const [isSimulationMode, setIsSimulationMode] = useState(false);
+  const animalTypes = getUniqueAnimalTypes(
+    biologicalAssets,
+    fairValuePerKgByType,
+  );
 
   // Calculate balances whenever entries or COA changes
   useEffect(() => {
@@ -461,6 +541,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
     nextJournalDocuments = journalDocuments,
     nextChartOfAccounts = chartOfAccounts,
     nextAdmins = admins,
+    nextFairValuePerKgByType = fairValuePerKgByType,
+    forceBackend = false,
   ) => {
     // Simpan ke localStorage terlebih dahulu (untuk fallback jika backend down)
     try {
@@ -479,13 +561,22 @@ export function DataProvider({ children }: { children: ReactNode }) {
         FAIR_VALUE_PER_KG_STORAGE_KEY,
         String(nextFairValuePerKg),
       );
+      localStorage.setItem(
+        FAIR_VALUE_BY_TYPE_STORAGE_KEY,
+        JSON.stringify(nextFairValuePerKgByType),
+      );
     } catch (error) {
       console.error("Gagal menyimpan data ke localStorage", error);
     }
 
+    if (isSimulationMode && !forceBackend) {
+      console.info("Mode data contoh aktif: perubahan hanya disimpan lokal.");
+      return;
+    }
+
     // Coba simpan ke backend juga
     try {
-      await fetch(`${API_BASE_URL}/state`, {
+      const response = await fetch(`${API_BASE_URL}/state`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -497,63 +588,94 @@ export function DataProvider({ children }: { children: ReactNode }) {
           chartOfAccounts: nextChartOfAccounts,
           journalDocuments: nextJournalDocuments,
           admins: nextAdmins,
+          fairValuePerKgByType: nextFairValuePerKgByType,
         }),
       });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => null);
+        throw new Error(
+          errorData?.message || `Backend gagal menyimpan (${response.status})`,
+        );
+      }
     } catch (error) {
       console.warn(
-        "Gagal menyimpan data ke backend, menggunakan localStorage",
+        "Gagal menyimpan data ke backend, data hanya tersimpan di localStorage",
         error,
       );
+      alert(
+        "Data belum masuk ke database MySQL. Pastikan backend dan MySQL berjalan, lalu simpan ulang.",
+      );
+      throw error;
     }
   };
 
-  const commitState = (
+  const commitState = async (
     nextAssets: BiologicalAsset[],
     nextEntries: JournalEntry[],
     nextFairValuePerKg = fairValuePerKg,
     nextJournalDocuments = journalDocuments,
+    nextFairValuePerKgByType = fairValuePerKgByType,
+    forceBackend = false,
   ) => {
-    applyState(nextAssets, nextEntries);
-    setFairValuePerKgState(nextFairValuePerKg);
-    localStorage.setItem(
-      FAIR_VALUE_PER_KG_STORAGE_KEY,
-      String(nextFairValuePerKg),
-    );
-    void persistState(
+    await persistState(
       nextAssets,
       nextEntries,
       nextFairValuePerKg,
       nextJournalDocuments,
+      chartOfAccounts,
+      admins,
+      nextFairValuePerKgByType,
+      forceBackend,
     );
+    applyState(nextAssets, nextEntries);
+    setFairValuePerKgState(nextFairValuePerKg);
+    setFairValuePerKgByTypeState(nextFairValuePerKgByType);
   };
 
   const loadStateFromBackend = async () => {
     try {
+      const storedSimulationMode =
+        localStorage.getItem(SIMULATION_MODE_STORAGE_KEY) === "true";
+      if (storedSimulationMode) {
+        throw new Error("Mode data contoh aktif");
+      }
+
       const response = await fetch(`${API_BASE_URL}/state`);
       if (!response.ok) {
         throw new Error(`Backend belum siap (${response.status})`);
       }
 
       const data = await response.json();
-      const backendFairValuePerKg = Number(data.fairValuePerKg || 100000);
+      const backendFairValuePerKg = Number(data.fairValuePerKg ?? 100000);
       const storedFairValuePerKg = Number(
         localStorage.getItem(FAIR_VALUE_PER_KG_STORAGE_KEY) || 0,
       );
       const resolvedFairValuePerKg =
-        Number.isFinite(backendFairValuePerKg) && backendFairValuePerKg > 0
+        Number.isFinite(backendFairValuePerKg) && backendFairValuePerKg >= 0
           ? backendFairValuePerKg
-          : Number.isFinite(storedFairValuePerKg) && storedFairValuePerKg > 0
+          : Number.isFinite(storedFairValuePerKg) && storedFairValuePerKg >= 0
             ? storedFairValuePerKg
             : 100000;
 
       const backendAssets = data.biologicalAssets || initialAssets;
       const { syncedAssets, changed } = syncAgeByMonth(backendAssets);
+      const resolvedFairValueByType = normalizeFairValueByType(
+        data.fairValuePerKgByType,
+        syncedAssets,
+        resolvedFairValuePerKg,
+      );
 
       applyState(syncedAssets, data.journalEntries || initialJournalEntries);
       setFairValuePerKgState(resolvedFairValuePerKg);
+      setFairValuePerKgByTypeState(resolvedFairValueByType);
       localStorage.setItem(
         FAIR_VALUE_PER_KG_STORAGE_KEY,
         String(resolvedFairValuePerKg),
+      );
+      localStorage.setItem(
+        FAIR_VALUE_BY_TYPE_STORAGE_KEY,
+        JSON.stringify(resolvedFairValueByType),
       );
 
       // Load COA and admin users dari endpoints terpisah
@@ -631,6 +753,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
           syncedAssets,
           data.journalEntries || initialJournalEntries,
           resolvedFairValuePerKg,
+          journalDocuments,
+          chartOfAccounts,
+          admins,
+          resolvedFairValueByType,
         );
       }
     } catch (error) {
@@ -646,6 +772,11 @@ export function DataProvider({ children }: { children: ReactNode }) {
         const storedDocuments = localStorage.getItem(STORAGE_KEY_DOCUMENTS);
         const storedCOA = localStorage.getItem(STORAGE_KEY_COA);
         const storedAdmins = localStorage.getItem(STORAGE_KEY_ADMINS);
+        const storedFairValueByType = localStorage.getItem(
+          FAIR_VALUE_BY_TYPE_STORAGE_KEY,
+        );
+        const storedSimulationMode =
+          localStorage.getItem(SIMULATION_MODE_STORAGE_KEY) === "true";
         const storedFairValuePerKg = Number(
           localStorage.getItem(FAIR_VALUE_PER_KG_STORAGE_KEY) || 100000,
         );
@@ -661,12 +792,19 @@ export function DataProvider({ children }: { children: ReactNode }) {
           : initialAdmins;
 
         const { syncedAssets } = syncAgeByMonth(assets);
+        const fairValueByType = normalizeFairValueByType(
+          storedFairValueByType ? JSON.parse(storedFairValueByType) : null,
+          syncedAssets,
+          storedFairValuePerKg,
+        );
 
         applyState(syncedAssets, entries);
         setFairValuePerKgState(storedFairValuePerKg);
+        setFairValuePerKgByTypeState(fairValueByType);
         setJournalDocuments(documents);
         setChartOfAccounts(coa);
         setAdmins(admins_list);
+        setIsSimulationMode(storedSimulationMode);
 
         console.log("✅ Data dimuat dari localStorage (offline mode)");
       } catch (parseError) {
@@ -677,24 +815,13 @@ export function DataProvider({ children }: { children: ReactNode }) {
         const { syncedAssets } = syncAgeByMonth(initialAssets);
         applyState(syncedAssets, initialJournalEntries);
         setFairValuePerKgState(100000);
+        setFairValuePerKgByTypeState(defaultFairValuePerKgByType);
+        setIsSimulationMode(false);
       }
     }
   };
 
   useEffect(() => {
-    const storedAuth = localStorage.getItem(AUTH_STORAGE_KEY);
-    if (storedAuth === "true") {
-      setIsAuthenticated(true);
-      const storedUser = localStorage.getItem(CURRENT_USER_KEY);
-      if (storedUser) {
-        try {
-          setCurrentUser(JSON.parse(storedUser));
-        } catch (e) {
-          // fallback
-        }
-      }
-    }
-
     void loadStateFromBackend();
   }, []);
 
@@ -754,24 +881,31 @@ export function DataProvider({ children }: { children: ReactNode }) {
     const asset = biologicalAssets.find((a) => a.id === id);
     if (!asset) return;
 
+    const purchasePrice = Number(asset.purchasePrice || 0);
+    const oldFairValue = Number(asset.fairValue || 0);
+    const newFairValue =
+      newWeight * (fairValuePerKgByType[asset.type] || fairValuePerKg);
+    const oldValuationDifference = oldFairValue - purchasePrice;
+    const newValuationDifference = newFairValue - purchasePrice;
+    const valuationDifferenceChange =
+      newValuationDifference - oldValuationDifference;
+
     const updatedAssets = biologicalAssets.map((a) =>
       a.id === id
         ? {
             ...a,
             weight: newWeight,
-            fairValue: newWeight * fairValuePerKg,
+            fairValue: newFairValue,
+            profit: Math.max(newValuationDifference, 0),
+            loss: Math.max(-newValuationDifference, 0),
             lastUpdated: new Date().toISOString().split("T")[0],
             updatedBy: currentUser?.username,
           }
         : a,
     );
 
-    const oldFairValue = asset.fairValue;
-    const newFairValue = newWeight * fairValuePerKg;
-    const difference = newFairValue - oldFairValue;
-
     const updatedEntries =
-      difference !== 0
+      valuationDifferenceChange !== 0
         ? [
             ...journalEntries,
             {
@@ -779,23 +913,23 @@ export function DataProvider({ children }: { children: ReactNode }) {
               date: new Date().toISOString().split("T")[0],
               description: `Penyesuaian Nilai Wajar ${asset.tagId} (${asset.weight}kg → ${newWeight}kg)`,
               debitAccount:
-                difference > 0
+                valuationDifferenceChange > 0
                   ? "1-3000 Aset Biologis"
                   : "5-4000 Kerugian Nilai Wajar",
               debitAssetId: id,
-              debitAmount: Math.abs(difference),
+              debitAmount: Math.abs(valuationDifferenceChange),
               creditAccount:
-                difference > 0
+                valuationDifferenceChange > 0
                   ? "4-2000 Keuntungan Nilai Wajar"
                   : "1-3000 Aset Biologis",
-              creditAssetId: difference < 0 ? id : undefined,
-              creditAmount: Math.abs(difference),
+              creditAssetId: valuationDifferenceChange < 0 ? id : undefined,
+              creditAmount: Math.abs(valuationDifferenceChange),
               createdBy: currentUser?.username,
             },
           ]
         : journalEntries;
 
-    commitState(updatedAssets, updatedEntries, fairValuePerKg);
+    await commitState(updatedAssets, updatedEntries, fairValuePerKg);
   };
 
   const addJournalEntry = async (entry: Omit<JournalEntry, "id">) => {
@@ -804,7 +938,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       ...journalEntries,
       { ...entry, id, createdBy: currentUser?.username },
     ];
-    commitState(biologicalAssets, nextEntries, fairValuePerKg);
+    await commitState(biologicalAssets, nextEntries, fairValuePerKg);
     return id;
   };
 
@@ -817,20 +951,20 @@ export function DataProvider({ children }: { children: ReactNode }) {
         ? { ...entry, id, updatedBy: currentUser?.username }
         : journalEntry,
     );
-    commitState(biologicalAssets, nextEntries, fairValuePerKg);
+    await commitState(biologicalAssets, nextEntries, fairValuePerKg);
   };
 
   const deleteJournalEntry = async (id: string) => {
     const nextEntries = journalEntries.filter((e) => e.id !== id);
     setJournalDocuments((docs) => docs.filter((d) => d.journalEntryId !== id));
-    commitState(biologicalAssets, nextEntries, fairValuePerKg);
+    await commitState(biologicalAssets, nextEntries, fairValuePerKg);
   };
 
   const addBiologicalAsset = async (
     asset: Omit<BiologicalAsset, "id" | "lastUpdated">,
   ) => {
     const today = getTodayDate();
-    const purchasePrice = Number(asset.purchasePrice || asset.fairValue);
+    const purchasePrice = Number(asset.purchasePrice ?? 0);
     const fairValue = Number(asset.fairValue || 0);
     const valuationDifference = fairValue - purchasePrice;
     const profit = Math.max(valuationDifference, 0);
@@ -892,7 +1026,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
             createdBy: currentUser?.username,
           };
 
-    commitState(
+    await commitState(
       [...biologicalAssets, newAsset],
       [
         ...journalEntries,
@@ -915,18 +1049,16 @@ export function DataProvider({ children }: { children: ReactNode }) {
     const newPurchasePrice = Number(
       asset.purchasePrice ?? existingAsset.purchasePrice ?? newFairValue,
     );
-    const fairValueDifference =
-      newFairValue - Number(existingAsset.fairValue || 0);
+    const oldFairValue = Number(existingAsset.fairValue || 0);
+    const oldPurchasePrice = Number(existingAsset.purchasePrice || 0);
     const purchasePriceDifference =
-      newPurchasePrice - Number(existingAsset.purchasePrice || 0);
-    const newProfit = Number(
-      asset.profit ?? Math.max(newFairValue - newPurchasePrice, 0),
-    );
-    const newLoss = Number(
-      asset.loss ?? Math.max(newPurchasePrice - newFairValue, 0),
-    );
-    const profitDifference = newProfit - Number(existingAsset.profit || 0);
-    const lossDifference = newLoss - Number(existingAsset.loss || 0);
+      newPurchasePrice - oldPurchasePrice;
+    const oldValuationDifference = oldFairValue - oldPurchasePrice;
+    const newValuationDifference = newFairValue - newPurchasePrice;
+    const valuationDifferenceChange =
+      newValuationDifference - oldValuationDifference;
+    const newProfit = Math.max(newValuationDifference, 0);
+    const newLoss = Math.max(-newValuationDifference, 0);
 
     const updatedAssets = biologicalAssets.map((a) =>
       a.id === id
@@ -966,72 +1098,28 @@ export function DataProvider({ children }: { children: ReactNode }) {
       });
     }
 
-    if (fairValueDifference !== 0) {
+    if (valuationDifferenceChange !== 0) {
       autoEntries.push({
         id: String(baseId + autoEntries.length + 1),
         date: updateDate,
         description: `Penyesuaian nilai wajar ${existingAsset.tagId}`,
         debitAccount:
-          fairValueDifference > 0
+          valuationDifferenceChange > 0
             ? findAccount(chartOfAccounts, "1-3000", "Aset Biologis")
             : findAccount(chartOfAccounts, "5-4000", "Kerugian Nilai Wajar"),
-        debitAssetId: fairValueDifference > 0 ? id : undefined,
-        debitAmount: Math.abs(fairValueDifference),
+        debitAssetId: valuationDifferenceChange > 0 ? id : undefined,
+        debitAmount: Math.abs(valuationDifferenceChange),
         creditAccount:
-          fairValueDifference > 0
+          valuationDifferenceChange > 0
             ? findAccount(chartOfAccounts, "4-2000", "Keuntungan Nilai Wajar")
             : findAccount(chartOfAccounts, "1-3000", "Aset Biologis"),
-        creditAssetId: fairValueDifference < 0 ? id : undefined,
-        creditAmount: Math.abs(fairValueDifference),
+        creditAssetId: valuationDifferenceChange < 0 ? id : undefined,
+        creditAmount: Math.abs(valuationDifferenceChange),
         createdBy: currentUser?.username,
       });
     }
 
-    if (
-      fairValueDifference === 0 &&
-      purchasePriceDifference === 0 &&
-      profitDifference > 0
-    ) {
-      autoEntries.push({
-        id: String(baseId + autoEntries.length + 1),
-        date: updateDate,
-        description: `Pencatatan untung ${existingAsset.tagId}`,
-        debitAccount: findAccount(chartOfAccounts, "1-3000", "Aset Biologis"),
-        debitAssetId: id,
-        debitAmount: profitDifference,
-        creditAccount: findAccount(
-          chartOfAccounts,
-          "4-2000",
-          "Keuntungan Nilai Wajar",
-        ),
-        creditAmount: profitDifference,
-        createdBy: currentUser?.username,
-      });
-    }
-
-    if (
-      fairValueDifference === 0 &&
-      purchasePriceDifference === 0 &&
-      lossDifference > 0
-    ) {
-      autoEntries.push({
-        id: String(baseId + autoEntries.length + 1),
-        date: updateDate,
-        description: `Pencatatan rugi ${existingAsset.tagId}`,
-        debitAccount: findAccount(
-          chartOfAccounts,
-          "5-4000",
-          "Kerugian Nilai Wajar",
-        ),
-        debitAmount: lossDifference,
-        creditAccount: findAccount(chartOfAccounts, "1-3000", "Aset Biologis"),
-        creditAssetId: id,
-        creditAmount: lossDifference,
-        createdBy: currentUser?.username,
-      });
-    }
-
-    commitState(
+    await commitState(
       updatedAssets,
       [...journalEntries, ...autoEntries],
       fairValuePerKg,
@@ -1042,32 +1130,209 @@ export function DataProvider({ children }: { children: ReactNode }) {
     const asset = biologicalAssets.find((a) => a.id === id);
     if (!asset) return;
 
-    const newEntry: JournalEntry = {
-      id: String(Date.now()),
-      date: new Date().toISOString().split("T")[0],
-      description: `Penghapusan ${asset.type} ${asset.tagId} (Penjualan/Kematian)`,
-      debitAccount: "5-3000 Harga Pokok Penjualan",
-      debitAmount: asset.fairValue,
-      creditAccount: "1-3000 Aset Biologis",
-      creditAssetId: id,
-      creditAmount: asset.fairValue,
-      createdBy: currentUser?.username,
-    };
+    const today = getTodayDate();
+    const purchasePrice = Number(asset.purchasePrice || 0);
+    const fairValue = Number(asset.fairValue || 0);
+    const valuationDifference = fairValue - purchasePrice;
+    const baseId = Date.now();
+    const deletionEntries: JournalEntry[] = [];
 
-    commitState(
+    if (purchasePrice !== 0) {
+      deletionEntries.push({
+        id: String(baseId + deletionEntries.length + 1),
+        date: today,
+        description: `HPP ${asset.type} ${asset.tagId} berdasarkan harga beli`,
+        debitAccount: findAccount(chartOfAccounts, "5-3000", "Harga Pokok Penjualan"),
+        debitAmount: purchasePrice,
+        creditAccount: findAccount(chartOfAccounts, "1-3000", "Aset Biologis"),
+        creditAssetId: id,
+        creditAmount: purchasePrice,
+        createdBy: currentUser?.username,
+      });
+    }
+
+    if (valuationDifference > 0) {
+      deletionEntries.push({
+        id: String(baseId + deletionEntries.length + 1),
+        date: today,
+        description: `Pembalikan keuntungan nilai wajar ${asset.tagId}`,
+        debitAccount: findAccount(chartOfAccounts, "4-2000", "Keuntungan Nilai Wajar"),
+        debitAmount: valuationDifference,
+        creditAccount: findAccount(chartOfAccounts, "1-3000", "Aset Biologis"),
+        creditAssetId: id,
+        creditAmount: valuationDifference,
+        createdBy: currentUser?.username,
+      });
+    }
+
+    if (valuationDifference < 0) {
+      deletionEntries.push({
+        id: String(baseId + deletionEntries.length + 1),
+        date: today,
+        description: `Pembalikan kerugian nilai wajar ${asset.tagId}`,
+        debitAccount: findAccount(chartOfAccounts, "1-3000", "Aset Biologis"),
+        debitAssetId: id,
+        debitAmount: Math.abs(valuationDifference),
+        creditAccount: findAccount(chartOfAccounts, "5-4000", "Kerugian Nilai Wajar"),
+        creditAmount: Math.abs(valuationDifference),
+        createdBy: currentUser?.username,
+      });
+    }
+
+    await commitState(
       biologicalAssets.filter((a) => a.id !== id),
-      [...journalEntries, newEntry],
+      [...journalEntries, ...deletionEntries],
       fairValuePerKg,
     );
   };
 
   const setFairValuePerKg = async (nextValue: number) => {
-    if (!Number.isFinite(nextValue) || nextValue <= 0) return;
-    const updatedAssets = biologicalAssets.map((asset) => ({
-      ...asset,
-      fairValue: asset.weight * nextValue,
-    }));
-    commitState(updatedAssets, journalEntries, nextValue);
+    if (!Number.isFinite(nextValue) || nextValue < 0) return;
+    const today = getTodayDate();
+    const baseId = Date.now();
+    const autoEntries: JournalEntry[] = [];
+    const updatedAssets = biologicalAssets.map((asset) => {
+      const purchasePrice = Number(asset.purchasePrice || 0);
+      const oldFairValue = Number(asset.fairValue || 0);
+      const fairValue = asset.weight * nextValue;
+      const oldValuationDifference = oldFairValue - purchasePrice;
+      const newValuationDifference = fairValue - purchasePrice;
+      const valuationDifferenceChange =
+        newValuationDifference - oldValuationDifference;
+
+      if (valuationDifferenceChange !== 0) {
+        autoEntries.push({
+          id: String(baseId + autoEntries.length + 1),
+          date: today,
+          description: `Penyesuaian nilai wajar ${asset.tagId}`,
+          debitAccount:
+            valuationDifferenceChange > 0
+              ? findAccount(chartOfAccounts, "1-3000", "Aset Biologis")
+              : findAccount(chartOfAccounts, "5-4000", "Kerugian Nilai Wajar"),
+          debitAssetId: valuationDifferenceChange > 0 ? asset.id : undefined,
+          debitAmount: Math.abs(valuationDifferenceChange),
+          creditAccount:
+            valuationDifferenceChange > 0
+              ? findAccount(chartOfAccounts, "4-2000", "Keuntungan Nilai Wajar")
+              : findAccount(chartOfAccounts, "1-3000", "Aset Biologis"),
+          creditAssetId: valuationDifferenceChange < 0 ? asset.id : undefined,
+          creditAmount: Math.abs(valuationDifferenceChange),
+          createdBy: currentUser?.username,
+        });
+      }
+
+      return {
+        ...asset,
+        fairValue,
+        profit: Math.max(newValuationDifference, 0),
+        loss: Math.max(-newValuationDifference, 0),
+        lastUpdated: today,
+        updatedBy: currentUser?.username,
+      };
+    });
+    await commitState(updatedAssets, [...journalEntries, ...autoEntries], nextValue);
+  };
+
+  const setFairValuePerKgForType = async (type: string, nextValue: number) => {
+    const normalizedType = type.trim();
+    if (!normalizedType || !Number.isFinite(nextValue) || nextValue < 0) {
+      return;
+    }
+
+    const nextFairValueByType = {
+      ...fairValuePerKgByType,
+      [normalizedType]: nextValue,
+    };
+    const today = getTodayDate();
+    const baseId = Date.now();
+    const autoEntries: JournalEntry[] = [];
+    const updatedAssets = biologicalAssets.map((asset) => {
+      if (asset.type !== normalizedType) return asset;
+
+      const oldFairValue = Number(asset.fairValue || 0);
+      const fairValue = asset.weight * nextValue;
+      const purchasePrice = Number(asset.purchasePrice || 0);
+      const oldValuationDifference = oldFairValue - purchasePrice;
+      const newValuationDifference = fairValue - purchasePrice;
+      const valuationDifferenceChange =
+        newValuationDifference - oldValuationDifference;
+
+      if (valuationDifferenceChange !== 0) {
+        autoEntries.push({
+          id: String(baseId + autoEntries.length + 1),
+          date: today,
+          description: `Penyesuaian nilai wajar ${asset.tagId}`,
+          debitAccount:
+            valuationDifferenceChange > 0
+              ? findAccount(chartOfAccounts, "1-3000", "Aset Biologis")
+              : findAccount(chartOfAccounts, "5-4000", "Kerugian Nilai Wajar"),
+          debitAssetId: valuationDifferenceChange > 0 ? asset.id : undefined,
+          debitAmount: Math.abs(valuationDifferenceChange),
+          creditAccount:
+            valuationDifferenceChange > 0
+              ? findAccount(chartOfAccounts, "4-2000", "Keuntungan Nilai Wajar")
+              : findAccount(chartOfAccounts, "1-3000", "Aset Biologis"),
+          creditAssetId: valuationDifferenceChange < 0 ? asset.id : undefined,
+          creditAmount: Math.abs(valuationDifferenceChange),
+          createdBy: currentUser?.username,
+        });
+      }
+
+      return {
+        ...asset,
+        fairValue,
+        profit: Math.max(newValuationDifference, 0),
+        loss: Math.max(-newValuationDifference, 0),
+        lastUpdated: today,
+        updatedBy: currentUser?.username,
+      };
+    });
+
+    await commitState(
+      updatedAssets,
+      [...journalEntries, ...autoEntries],
+      fairValuePerKg,
+      journalDocuments,
+      nextFairValueByType,
+    );
+  };
+
+  const addAnimalType = async (
+    type: string,
+    initialFairValuePerKg: number,
+  ) => {
+    const normalizedType = type.trim();
+    if (!normalizedType) {
+      alert("Jenis hewan wajib diisi");
+      return;
+    }
+    if (!Number.isFinite(initialFairValuePerKg) || initialFairValuePerKg <= 0) {
+      alert("Harga per kg harus lebih dari 0");
+      return;
+    }
+    if (Object.prototype.hasOwnProperty.call(fairValuePerKgByType, normalizedType)) {
+      alert("Jenis hewan sudah ada");
+      return;
+    }
+
+    const nextFairValueByType = {
+      ...fairValuePerKgByType,
+      [normalizedType]: initialFairValuePerKg,
+    };
+    setFairValuePerKgByTypeState(nextFairValueByType);
+    localStorage.setItem(
+      FAIR_VALUE_BY_TYPE_STORAGE_KEY,
+      JSON.stringify(nextFairValueByType),
+    );
+    await persistState(
+      biologicalAssets,
+      journalEntries,
+      fairValuePerKg,
+      journalDocuments,
+      chartOfAccounts,
+      admins,
+      nextFairValueByType,
+    );
   };
 
   // Journal Documents
@@ -1080,7 +1345,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     const updatedDocs = [...journalDocuments, newDoc];
     setJournalDocuments(updatedDocs);
     localStorage.setItem(STORAGE_KEY_DOCUMENTS, JSON.stringify(updatedDocs));
-    void persistState(
+    await persistState(
       biologicalAssets,
       journalEntries,
       fairValuePerKg,
@@ -1096,7 +1361,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     const updatedDocs = journalDocuments.filter((d) => d.id !== docId);
     setJournalDocuments(updatedDocs);
     localStorage.setItem(STORAGE_KEY_DOCUMENTS, JSON.stringify(updatedDocs));
-    void persistState(
+    await persistState(
       biologicalAssets,
       journalEntries,
       fairValuePerKg,
@@ -1118,8 +1383,24 @@ export function DataProvider({ children }: { children: ReactNode }) {
     };
     const updatedCOA = [...chartOfAccounts, newAccount];
     setChartOfAccounts(updatedCOA);
-    // Simpan ke localStorage
     localStorage.setItem(STORAGE_KEY_COA, JSON.stringify(updatedCOA));
+
+    if (isSimulationMode) return;
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/chart-of-accounts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(newAccount),
+      });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => null);
+        throw new Error(errorData?.message || "Gagal menyimpan akun");
+      }
+    } catch (error) {
+      console.warn("Gagal menyimpan akun ke database", error);
+      alert("Akun belum masuk ke database MySQL. Pastikan backend berjalan.");
+    }
   };
 
   const updateChartOfAccount = async (
@@ -1130,8 +1411,24 @@ export function DataProvider({ children }: { children: ReactNode }) {
       a.code === code ? { ...a, ...account } : a,
     );
     setChartOfAccounts(updatedCOA);
-    // Simpan ke localStorage
     localStorage.setItem(STORAGE_KEY_COA, JSON.stringify(updatedCOA));
+
+    if (isSimulationMode) return;
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/chart-of-accounts/${code}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(account),
+      });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => null);
+        throw new Error(errorData?.message || "Gagal mengubah akun");
+      }
+    } catch (error) {
+      console.warn("Gagal mengubah akun di database", error);
+      alert("Perubahan akun belum masuk ke database MySQL. Pastikan backend berjalan.");
+    }
   };
 
   const deleteChartOfAccount = async (code: string) => {
@@ -1145,12 +1442,30 @@ export function DataProvider({ children }: { children: ReactNode }) {
     }
     const updatedCOA = chartOfAccounts.filter((a) => a.code !== code);
     setChartOfAccounts(updatedCOA);
-    // Simpan ke localStorage
     localStorage.setItem(STORAGE_KEY_COA, JSON.stringify(updatedCOA));
+
+    if (isSimulationMode) return;
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/chart-of-accounts/${code}`, {
+        method: "DELETE",
+      });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => null);
+        throw new Error(errorData?.message || "Gagal menghapus akun");
+      }
+    } catch (error) {
+      console.warn("Gagal menghapus akun di database", error);
+      alert("Hapus akun belum masuk ke database MySQL. Pastikan backend berjalan.");
+    }
   };
 
-  const getAccountsByParent = (parentCode?: string): ChartOfAccount[] => {
-    return chartOfAccounts.filter((a) => a.parentCode === parentCode);
+  const getAccountsByParent = (parentCode?: string | null): ChartOfAccount[] => {
+    return chartOfAccounts.filter((account) => {
+      const resolvedParent = account.parentCode || undefined;
+      const resolvedRequestedParent = parentCode || undefined;
+      return resolvedParent === resolvedRequestedParent;
+    });
   };
 
   // Admin Management
@@ -1163,8 +1478,24 @@ export function DataProvider({ children }: { children: ReactNode }) {
     };
     const updatedAdmins = [...admins, newAdmin];
     setAdmins(updatedAdmins);
-    // Simpan ke localStorage
     localStorage.setItem(STORAGE_KEY_ADMINS, JSON.stringify(updatedAdmins));
+
+    if (isSimulationMode) return;
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/admin-users`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(newAdmin),
+      });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => null);
+        throw new Error(errorData?.message || "Gagal menyimpan admin");
+      }
+    } catch (error) {
+      console.warn("Gagal menyimpan admin ke database", error);
+      alert("Admin belum masuk ke database MySQL. Pastikan backend berjalan.");
+    }
   };
 
   const updateAdmin = async (id: string, admin: Partial<AdminUser>) => {
@@ -1172,8 +1503,24 @@ export function DataProvider({ children }: { children: ReactNode }) {
       a.id === id ? { ...a, ...admin } : a,
     );
     setAdmins(updatedAdmins);
-    // Simpan ke localStorage
     localStorage.setItem(STORAGE_KEY_ADMINS, JSON.stringify(updatedAdmins));
+
+    if (isSimulationMode) return;
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/admin-users/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(admin),
+      });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => null);
+        throw new Error(errorData?.message || "Gagal mengubah admin");
+      }
+    } catch (error) {
+      console.warn("Gagal mengubah admin di database", error);
+      alert("Perubahan admin belum masuk ke database MySQL. Pastikan backend berjalan.");
+    }
   };
 
   const deleteAdmin = async (id: string) => {
@@ -1183,8 +1530,22 @@ export function DataProvider({ children }: { children: ReactNode }) {
     }
     const updatedAdmins = admins.filter((a) => a.id !== id);
     setAdmins(updatedAdmins);
-    // Simpan ke localStorage
     localStorage.setItem(STORAGE_KEY_ADMINS, JSON.stringify(updatedAdmins));
+
+    if (isSimulationMode) return;
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/admin-users/${id}`, {
+        method: "DELETE",
+      });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => null);
+        throw new Error(errorData?.message || "Gagal menghapus admin");
+      }
+    } catch (error) {
+      console.warn("Gagal menghapus admin di database", error);
+      alert("Hapus admin belum masuk ke database MySQL. Pastikan backend berjalan.");
+    }
   };
 
   // Export Functions
@@ -1257,28 +1618,55 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
     setChartOfAccounts(mergedCOA);
     setJournalDocuments(simulationDocuments);
+    setIsSimulationMode(true);
+    localStorage.setItem(SIMULATION_MODE_STORAGE_KEY, "true");
+    localStorage.setItem(
+      STORAGE_KEY_ASSETS,
+      JSON.stringify(bundle.biologicalAssets),
+    );
+    localStorage.setItem(
+      STORAGE_KEY_ENTRIES,
+      JSON.stringify(bundle.journalEntries),
+    );
+    localStorage.setItem(
+      STORAGE_KEY_DOCUMENTS,
+      JSON.stringify(simulationDocuments),
+    );
     localStorage.setItem(STORAGE_KEY_COA, JSON.stringify(mergedCOA));
-    commitState(
-      bundle.biologicalAssets,
-      bundle.journalEntries,
-      bundle.fairValuePerKg,
-      simulationDocuments,
+    localStorage.setItem(
+      FAIR_VALUE_PER_KG_STORAGE_KEY,
+      String(bundle.fairValuePerKg),
     );
-    void persistState(
+    const simulationFairValueByType = normalizeFairValueByType(
+      null,
       bundle.biologicalAssets,
-      bundle.journalEntries,
       bundle.fairValuePerKg,
-      simulationDocuments,
-      mergedCOA,
     );
+    localStorage.setItem(
+      FAIR_VALUE_BY_TYPE_STORAGE_KEY,
+      JSON.stringify(simulationFairValueByType),
+    );
+    applyState(bundle.biologicalAssets, bundle.journalEntries);
+    setFairValuePerKgState(bundle.fairValuePerKg);
+    setFairValuePerKgByTypeState(simulationFairValueByType);
   };
 
   const resetData = async () => {
+    setIsSimulationMode(false);
+    localStorage.removeItem(SIMULATION_MODE_STORAGE_KEY);
     const resetAssets = initialAssets.map((asset) => ({
       ...asset,
       ageUpdatedAt: asset.lastUpdated,
     }));
-    commitState(resetAssets, initialJournalEntries, fairValuePerKg);
+    await commitState(
+      resetAssets,
+      initialJournalEntries,
+      100000,
+      [],
+      defaultFairValuePerKgByType,
+      true,
+    );
+    setJournalDocuments([]);
   };
 
   const resetToZero = async () => {
@@ -1287,11 +1675,22 @@ export function DataProvider({ children }: { children: ReactNode }) {
         "⚠️ PERHATIAN: Ini akan menghapus SEMUA data (aset biologis dan jurnal) untuk memulai input data real. Lanjutkan?",
       )
     ) {
-      commitState([], [], fairValuePerKg);
-      // Clear localStorage juga
+      const zeroFairValueByType = Object.fromEntries(
+        animalTypes.map((type) => [type, 0]),
+      );
+
+      setIsSimulationMode(false);
+      localStorage.removeItem(SIMULATION_MODE_STORAGE_KEY);
+      await commitState([], [], 0, [], zeroFairValueByType, true);
+      setJournalDocuments([]);
       localStorage.setItem(STORAGE_KEY_ASSETS, JSON.stringify([]));
       localStorage.setItem(STORAGE_KEY_ENTRIES, JSON.stringify([]));
       localStorage.setItem(STORAGE_KEY_DOCUMENTS, JSON.stringify([]));
+      localStorage.setItem(FAIR_VALUE_PER_KG_STORAGE_KEY, "0");
+      localStorage.setItem(
+        FAIR_VALUE_BY_TYPE_STORAGE_KEY,
+        JSON.stringify(zeroFairValueByType),
+      );
     }
   };
 
@@ -1322,6 +1721,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
         accountBalances,
         fairValuePerKg,
         setFairValuePerKg,
+        fairValuePerKgByType,
+        animalTypes,
+        setFairValuePerKgForType,
+        addAnimalType,
         admins,
         addAdmin,
         updateAdmin,

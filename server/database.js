@@ -56,7 +56,7 @@ async function runMigrations() {
     CREATE TABLE IF NOT EXISTS biological_assets (
       id VARCHAR(64) PRIMARY KEY,
       tag_id VARCHAR(50) NOT NULL UNIQUE,
-      type ENUM('Domba', 'Kambing') NOT NULL,
+      type VARCHAR(100) NOT NULL,
       age INT NOT NULL DEFAULT 0,
       age_updated_at DATE NOT NULL,
       weight DECIMAL(12,2) NOT NULL DEFAULT 0,
@@ -178,6 +178,17 @@ async function runMigrations() {
     );
   }
 
+  const [assetTypeColumns] = await pool.query(
+    "SELECT DATA_TYPE AS dataType FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'biological_assets' AND COLUMN_NAME = 'type' LIMIT 1",
+    [databaseName],
+  );
+
+  if (assetTypeColumns[0]?.dataType === "enum") {
+    await pool.query(
+      "ALTER TABLE biological_assets MODIFY COLUMN type VARCHAR(100) NOT NULL",
+    );
+  }
+
   const [journalColumns] = await pool.query(
     "SELECT COUNT(*) AS total FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'journal_entries' AND COLUMN_NAME = 'created_by'",
     [databaseName],
@@ -256,7 +267,9 @@ async function seedDefaults(
       asset.ageUpdatedAt || asset.lastUpdated,
       asset.weight,
       asset.fairValue,
-      asset.purchasePrice || asset.fairValue,
+      asset.purchasePrice === undefined || asset.purchasePrice === null
+        ? asset.fairValue
+        : asset.purchasePrice,
       asset.profit || 0,
       asset.loss || 0,
       asset.lastUpdated,

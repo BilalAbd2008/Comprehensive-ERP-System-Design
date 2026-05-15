@@ -13,6 +13,8 @@ import {
   Play,
   FolderOpen,
   Trash,
+  Settings,
+  ChevronDown,
   Shield,
   Users,
   Workflow,
@@ -31,6 +33,7 @@ export default function Layout() {
     resetToZero,
   } = useData();
   const [isKertasKerjaOpen, setIsKertasKerjaOpen] = useState(true);
+  const [isDataToolsOpen, setIsDataToolsOpen] = useState(false);
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -231,32 +234,69 @@ export default function Layout() {
           className="p-4 space-y-2 border-t"
           style={{ borderColor: "#2D6A4F" }}
         >
-          <button
-            onClick={loadSimulationData}
-            className="w-full flex items-center gap-2 px-3 py-2 rounded text-sm transition-colors hover:opacity-80"
-            style={{ backgroundColor: "#2D6A4F" }}
-          >
-            <Play size={16} />
-            Data Contoh
-          </button>
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setIsDataToolsOpen(!isDataToolsOpen)}
+              className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded text-sm transition-colors hover:opacity-80"
+              style={{ backgroundColor: "#2D6A4F" }}
+            >
+              <span className="flex items-center gap-2">
+                <Settings size={16} />
+                Data & Reset
+              </span>
+              <ChevronDown
+                size={16}
+                style={{
+                  transform: isDataToolsOpen ? "rotate(180deg)" : "rotate(0deg)",
+                  transition: "transform 0.2s",
+                }}
+              />
+            </button>
 
-          <button
-            onClick={resetData}
-            className="w-full flex items-center gap-2 px-3 py-2 rounded text-sm transition-colors hover:opacity-80"
-            style={{ backgroundColor: "#2D6A4F" }}
-          >
-            <RotateCcw size={16} />
-            Reset ke Default
-          </button>
+            {isDataToolsOpen && (
+              <div
+                className="absolute bottom-full left-0 right-0 mb-2 rounded-lg border p-2 space-y-2 shadow-xl"
+                style={{ backgroundColor: "#1B4332", borderColor: "#2D6A4F" }}
+              >
+                <button
+                  onClick={() => {
+                    void loadSimulationData();
+                    setIsDataToolsOpen(false);
+                  }}
+                  className="w-full flex items-center gap-2 px-3 py-2 rounded text-sm transition-colors hover:opacity-80"
+                  style={{ backgroundColor: "#2D6A4F" }}
+                >
+                  <Play size={16} />
+                  Data Contoh
+                </button>
 
-          <button
-            onClick={resetToZero}
-            className="w-full flex items-center gap-2 px-3 py-2 rounded text-sm transition-colors hover:opacity-80"
-            style={{ backgroundColor: "#DC3545", color: "white" }}
-          >
-            <Trash size={16} />
-            Reset ke 0 (Real Data)
-          </button>
+                <button
+                  onClick={() => {
+                    void resetData();
+                    setIsDataToolsOpen(false);
+                  }}
+                  className="w-full flex items-center gap-2 px-3 py-2 rounded text-sm transition-colors hover:opacity-80"
+                  style={{ backgroundColor: "#2D6A4F" }}
+                >
+                  <RotateCcw size={16} />
+                  Reset ke Default
+                </button>
+
+                <button
+                  onClick={() => {
+                    void resetToZero();
+                    setIsDataToolsOpen(false);
+                  }}
+                  className="w-full flex items-center gap-2 px-3 py-2 rounded text-sm transition-colors hover:opacity-80"
+                  style={{ backgroundColor: "#DC3545", color: "white" }}
+                >
+                  <Trash size={16} />
+                  Reset ke 0 (Real Data)
+                </button>
+              </div>
+            )}
+          </div>
 
           <button
             onClick={() => {

@@ -89,7 +89,10 @@ function normalizeAsset(row) {
     ageUpdatedAt: row.age_updated_at,
     weight: Number(row.weight),
     fairValue: Number(row.fair_value),
-    purchasePrice: row.purchase_price ? Number(row.purchase_price) : undefined,
+    purchasePrice:
+      row.purchase_price === null || row.purchase_price === undefined
+        ? undefined
+        : Number(row.purchase_price),
     profit: row.profit ? Number(row.profit) : undefined,
     loss: row.loss ? Number(row.loss) : undefined,
     lastUpdated: row.last_updated,
@@ -164,9 +167,11 @@ function toAssetValues(assets) {
     asset.ageUpdatedAt || asset.lastUpdated,
     Number(asset.weight),
     Number(asset.fairValue),
-    asset.purchasePrice ? Number(asset.purchasePrice) : null,
-    asset.profit ? Number(asset.profit) : 0,
-    asset.loss ? Number(asset.loss) : 0,
+    asset.purchasePrice === undefined || asset.purchasePrice === null
+      ? null
+      : Number(asset.purchasePrice),
+    asset.profit === undefined || asset.profit === null ? 0 : Number(asset.profit),
+    asset.loss === undefined || asset.loss === null ? 0 : Number(asset.loss),
     asset.lastUpdated,
     asset.createdBy || "system",
     asset.updatedBy || null,
@@ -179,7 +184,9 @@ async function getFairValuePerKg() {
   );
   if (!rows.length) return defaultFairValuePerKg;
   const parsed = Number(rows[0].setting_value);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : defaultFairValuePerKg;
+  return Number.isFinite(parsed) && parsed >= 0
+    ? parsed
+    : defaultFairValuePerKg;
 }
 
 async function setFairValuePerKg(value, connection = null) {
@@ -187,6 +194,42 @@ async function setFairValuePerKg(value, connection = null) {
   await queryRunner.query(
     "INSERT INTO app_settings (setting_key, setting_value) VALUES ('fair_value_per_kg', ?) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)",
     [String(value)],
+  );
+}
+
+async function getFairValuePerKgByType() {
+  const [rows] = await getPool().query(
+    "SELECT setting_value FROM app_settings WHERE setting_key = 'fair_value_per_kg_by_type' LIMIT 1",
+  );
+  if (!rows.length) {
+    return { Domba: 80000, Kambing: defaultFairValuePerKg };
+  }
+
+  try {
+    const parsed = JSON.parse(rows[0].setting_value);
+    return parsed && typeof parsed === "object"
+      ? parsed
+      : { Domba: 80000, Kambing: defaultFairValuePerKg };
+  } catch {
+    return { Domba: 80000, Kambing: defaultFairValuePerKg };
+  }
+}
+
+async function setFairValuePerKgByType(value, connection = null) {
+  const normalized = {};
+  if (value && typeof value === "object") {
+    for (const [type, price] of Object.entries(value)) {
+      const parsed = Number(price);
+      if (String(type).trim() && Number.isFinite(parsed) && parsed >= 0) {
+        normalized[String(type).trim()] = parsed;
+      }
+    }
+  }
+
+  const queryRunner = connection || getPool();
+  await queryRunner.query(
+    "INSERT INTO app_settings (setting_key, setting_value) VALUES ('fair_value_per_kg_by_type', ?) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)",
+    [JSON.stringify(normalized)],
   );
 }
 
@@ -388,6 +431,7 @@ async function getState() {
     journalDocuments,
     accountBalances: computeAccountBalances(journalEntries),
     fairValuePerKg: await getFairValuePerKg(),
+    fairValuePerKgByType: await getFairValuePerKgByType(),
   };
 }
 
@@ -396,6 +440,7 @@ async function replaceState(
   journalEntries,
   fairValuePerKg,
   journalDocuments = [],
+  fairValuePerKgByType = null,
 ) {
   await withTransaction(async (connection) => {
     await connection.query("DELETE FROM journal_documents");
@@ -423,8 +468,11 @@ async function replaceState(
       );
     }
 
-    if (Number.isFinite(Number(fairValuePerKg)) && Number(fairValuePerKg) > 0) {
+    if (Number.isFinite(Number(fairValuePerKg)) && Number(fairValuePerKg) >= 0) {
       await setFairValuePerKg(Number(fairValuePerKg), connection);
+    }
+    if (fairValuePerKgByType) {
+      await setFairValuePerKgByType(fairValuePerKgByType, connection);
     }
   });
 
@@ -487,11 +535,13 @@ app.put("/api/state", async (req, res, next) => {
     const journalDocuments = Array.isArray(req.body?.journalDocuments)
       ? req.body.journalDocuments
       : [];
+    const fairValuePerKgByType = req.body?.fairValuePerKgByType || null;
     const state = await replaceState(
       biologicalAssets,
       journalEntries,
       fairValuePerKg,
       journalDocuments,
+      fairValuePerKgByType,
     );
     await ensureMonthlyBackup();
     res.json(state);
@@ -502,7 +552,7 @@ app.put("/api/state", async (req, res, next) => {
 
 app.delete("/api/state", async (_req, res, next) => {
   try {
-    const state = await replaceState([], []);
+    const state = await replaceState([], [], 0, [], {});
     await ensureMonthlyBackup();
     res.json(state);
   } catch (error) {
@@ -549,34 +599,26 @@ app.post("/api/assets", async (req, res, next) => {
   try {
     const id = String(req.body?.id || Date.now());
     const tagId = String(req.body?.tagId || "").trim();
-    const type = req.body?.type;
+    const type = String(req.body?.type || "").trim();
     const age = Number(req.body?.age || 0);
     const ageUpdatedAt =
       req.body?.ageUpdatedAt || new Date().toISOString().split("T")[0];
     const weight = Number(req.body?.weight || 0);
     const purchasePrice = Number(req.body?.purchasePrice || 0);
-    const fairValuePerKg = await getFairValuePerKg();
+    const fairValuePerKgByType = await getFairValuePerKgByType();
+    const fairValuePerKg =
+      Number(fairValuePerKgByType[type]) || (await getFairValuePerKg());
     const fairValue = Number(req.body?.fairValue || weight * fairValuePerKg);
     const lastUpdated =
       req.body?.lastUpdated || new Date().toISOString().split("T")[0];
     const createdBy = req.body?.createdBy || "system";
+    const valuationDifference = fairValue - purchasePrice;
+    const profit = Math.max(valuationDifference, 0);
+    const loss = Math.max(-valuationDifference, 0);
 
     if (!tagId) {
       return res.status(400).json({ message: "tagId wajib diisi" });
     }
-
-    const entryId = String(Number(id) + 1);
-    const journalEntry = {
-      id: entryId,
-      date: lastUpdated,
-      description: `Pembelian ${type} ${tagId}`,
-      debitAccount: "1-3000 Aset Biologis",
-      debitAssetId: id,
-      debitAmount: fairValue,
-      creditAccount: "1-1100 Kas",
-      creditAmount: fairValue,
-      createdBy,
-    };
 
     await withTransaction(async (connection) => {
       await connection.query(
@@ -590,27 +632,57 @@ app.post("/api/assets", async (req, res, next) => {
           weight,
           fairValue,
           purchasePrice,
-          0,
-          0,
+          profit,
+          loss,
           lastUpdated,
           createdBy,
         ],
       );
-      await connection.query(
-        "INSERT INTO journal_entries (id, entry_date, description, debit_account, debit_asset_id, debit_amount, credit_account, credit_asset_id, credit_amount, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [
-          journalEntry.id,
-          journalEntry.date,
-          journalEntry.description,
-          journalEntry.debitAccount,
-          journalEntry.debitAssetId,
-          journalEntry.debitAmount,
-          journalEntry.creditAccount,
+
+      const baseJournalId = Date.now();
+      const journalEntries = [];
+      if (purchasePrice !== 0) {
+        journalEntries.push([
+          String(baseJournalId + journalEntries.length + 1),
+          lastUpdated,
+          `Harga beli ${type} ${tagId}`,
+          "1-3000 Aset Biologis",
+          id,
+          purchasePrice,
+          "1-1100 Kas",
           null,
-          journalEntry.creditAmount,
-          journalEntry.createdBy,
-        ],
-      );
+          purchasePrice,
+          createdBy,
+        ]);
+      }
+
+      if (valuationDifference !== 0) {
+        journalEntries.push([
+          String(baseJournalId + journalEntries.length + 1),
+          lastUpdated,
+          valuationDifference > 0
+            ? `Untung nilai wajar awal ${type} ${tagId}`
+            : `Rugi nilai wajar awal ${type} ${tagId}`,
+          valuationDifference > 0
+            ? "1-3000 Aset Biologis"
+            : "5-4000 Kerugian Nilai Wajar",
+          valuationDifference > 0 ? id : null,
+          Math.abs(valuationDifference),
+          valuationDifference > 0
+            ? "4-2000 Keuntungan Nilai Wajar"
+            : "1-3000 Aset Biologis",
+          valuationDifference < 0 ? id : null,
+          Math.abs(valuationDifference),
+          createdBy,
+        ]);
+      }
+
+      for (const entry of journalEntries) {
+        await connection.query(
+          "INSERT INTO journal_entries (id, entry_date, description, debit_account, debit_asset_id, debit_amount, credit_account, credit_asset_id, credit_amount, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          entry,
+        );
+      }
     });
 
     const state = await getState();
@@ -628,7 +700,7 @@ app.patch("/api/assets/:id/weight", async (req, res, next) => {
     const updatedBy = req.body?.updatedBy || "system";
 
     const [rows] = await getPool().query(
-      "SELECT id, tag_id, type, age, age_updated_at, weight, fair_value, last_updated FROM biological_assets WHERE id = ? LIMIT 1",
+      "SELECT id, tag_id, type, age, age_updated_at, weight, fair_value, purchase_price, last_updated FROM biological_assets WHERE id = ? LIMIT 1",
       [assetId],
     );
 
@@ -637,16 +709,23 @@ app.patch("/api/assets/:id/weight", async (req, res, next) => {
     }
 
     const asset = normalizeAsset(rows[0]);
-    const fairValuePerKg = await getFairValuePerKg();
-    const oldFairValue = asset.fairValue;
+    const fairValuePerKgByType = await getFairValuePerKgByType();
+    const fairValuePerKg =
+      Number(fairValuePerKgByType[asset.type]) || (await getFairValuePerKg());
+    const purchasePrice = Number(asset.purchasePrice || 0);
+    const oldFairValue = Number(asset.fairValue || 0);
     const updatedFairValue = newWeight * fairValuePerKg;
-    const difference = updatedFairValue - oldFairValue;
+    const oldValuationDifference = oldFairValue - purchasePrice;
+    const newValuationDifference = updatedFairValue - purchasePrice;
+    const difference = newValuationDifference - oldValuationDifference;
+    const profit = Math.max(newValuationDifference, 0);
+    const loss = Math.max(-newValuationDifference, 0);
     const today = new Date().toISOString().split("T")[0];
 
     await withTransaction(async (connection) => {
       await connection.query(
-        "UPDATE biological_assets SET weight = ?, fair_value = ?, last_updated = ?, updated_by = ? WHERE id = ?",
-        [newWeight, updatedFairValue, today, updatedBy, assetId],
+        "UPDATE biological_assets SET weight = ?, fair_value = ?, profit = ?, loss = ?, last_updated = ?, updated_by = ? WHERE id = ?",
+        [newWeight, updatedFairValue, profit, loss, today, updatedBy, assetId],
       );
 
       if (difference !== 0) {
@@ -686,7 +765,7 @@ app.delete("/api/assets/:id", async (req, res, next) => {
     const deletedBy = req.body?.deletedBy || "system";
 
     const [rows] = await getPool().query(
-      "SELECT id, tag_id, type, age, age_updated_at, weight, fair_value, last_updated FROM biological_assets WHERE id = ? LIMIT 1",
+      "SELECT id, tag_id, type, age, age_updated_at, weight, fair_value, purchase_price, last_updated FROM biological_assets WHERE id = ? LIMIT 1",
       [assetId],
     );
 
@@ -696,23 +775,65 @@ app.delete("/api/assets/:id", async (req, res, next) => {
 
     const asset = normalizeAsset(rows[0]);
     const today = new Date().toISOString().split("T")[0];
+    const purchasePrice = Number(asset.purchasePrice || 0);
+    const fairValue = Number(asset.fairValue || 0);
+    const valuationDifference = fairValue - purchasePrice;
 
     await withTransaction(async (connection) => {
-      await connection.query(
-        "INSERT INTO journal_entries (id, entry_date, description, debit_account, debit_asset_id, debit_amount, credit_account, credit_asset_id, credit_amount, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [
-          String(Date.now()),
+      const baseId = Date.now();
+      const deletionEntries = [];
+
+      if (purchasePrice !== 0) {
+        deletionEntries.push([
+          String(baseId + deletionEntries.length + 1),
           today,
-          `Penghapusan ${asset.type} ${asset.tagId} (Penjualan/Kematian)`,
+          `HPP ${asset.type} ${asset.tagId} berdasarkan harga beli`,
           "5-3000 Harga Pokok Penjualan",
           null,
-          asset.fairValue,
+          purchasePrice,
           "1-3000 Aset Biologis",
           assetId,
-          asset.fairValue,
+          purchasePrice,
           deletedBy,
-        ],
-      );
+        ]);
+      }
+
+      if (valuationDifference > 0) {
+        deletionEntries.push([
+          String(baseId + deletionEntries.length + 1),
+          today,
+          `Pembalikan keuntungan nilai wajar ${asset.tagId}`,
+          "4-2000 Keuntungan Nilai Wajar",
+          null,
+          valuationDifference,
+          "1-3000 Aset Biologis",
+          assetId,
+          valuationDifference,
+          deletedBy,
+        ]);
+      }
+
+      if (valuationDifference < 0) {
+        deletionEntries.push([
+          String(baseId + deletionEntries.length + 1),
+          today,
+          `Pembalikan kerugian nilai wajar ${asset.tagId}`,
+          "1-3000 Aset Biologis",
+          assetId,
+          Math.abs(valuationDifference),
+          "5-4000 Kerugian Nilai Wajar",
+          null,
+          Math.abs(valuationDifference),
+          deletedBy,
+        ]);
+      }
+
+      for (const entry of deletionEntries) {
+        await connection.query(
+          "INSERT INTO journal_entries (id, entry_date, description, debit_account, debit_asset_id, debit_amount, credit_account, credit_asset_id, credit_amount, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          entry,
+        );
+      }
 
       await connection.query("DELETE FROM biological_assets WHERE id = ?", [
         assetId,
@@ -872,6 +993,7 @@ app.post("/api/admin-users", async (req, res, next) => {
     const email = req.body?.email || null;
     const role = req.body?.role || "operator";
     const isActive = req.body?.isActive !== false;
+    const createdBy = req.body?.createdBy || "system";
 
     if (!username || !fullName) {
       return res
@@ -881,8 +1003,8 @@ app.post("/api/admin-users", async (req, res, next) => {
 
     const passwordHash = hashPassword("admin123");
     await getPool().query(
-      "INSERT INTO admin_users (id, username, full_name, email, role, is_active, password_hash) VALUES (?, ?, ?, ?, ?, ?, ?)",
-      [id, username, fullName, email, role, isActive, passwordHash],
+      "INSERT INTO admin_users (id, username, full_name, email, role, is_active, password_hash, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      [id, username, fullName, email, role, isActive, passwordHash, createdBy],
     );
 
     const [newRow] = await getPool().query(
@@ -1035,6 +1157,7 @@ app.post("/api/chart-of-accounts", async (req, res, next) => {
     const parentCode = req.body?.parentCode || null;
     const category = req.body?.category || "expense";
     const isActive = req.body?.isActive !== false;
+    const createdBy = req.body?.createdBy || "system";
 
     if (!code || !name) {
       return res
@@ -1043,8 +1166,8 @@ app.post("/api/chart-of-accounts", async (req, res, next) => {
     }
 
     await getPool().query(
-      "INSERT INTO chart_of_accounts (code, name, parent_code, category, is_active) VALUES (?, ?, ?, ?, ?)",
-      [code, name, parentCode, category, isActive],
+      "INSERT INTO chart_of_accounts (code, name, parent_code, category, is_active, created_by) VALUES (?, ?, ?, ?, ?, ?)",
+      [code, name, parentCode, category, isActive, createdBy],
     );
 
     const [newRow] = await getPool().query(
@@ -1053,6 +1176,59 @@ app.post("/api/chart-of-accounts", async (req, res, next) => {
     );
 
     res.json({ account: normalizeChartOfAccount(newRow[0]) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.put("/api/chart-of-accounts/:code", async (req, res, next) => {
+  try {
+    const code = String(req.params.code || "");
+    const name = req.body?.name;
+    const parentCode = req.body?.parentCode;
+    const category = req.body?.category;
+    const isActive = req.body?.isActive;
+
+    const updates = [];
+    const values = [];
+
+    if (name !== undefined) {
+      updates.push("name = ?");
+      values.push(name);
+    }
+    if (parentCode !== undefined) {
+      updates.push("parent_code = ?");
+      values.push(parentCode || null);
+    }
+    if (category !== undefined) {
+      updates.push("category = ?");
+      values.push(category);
+    }
+    if (isActive !== undefined) {
+      updates.push("is_active = ?");
+      values.push(isActive);
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({ message: "Tidak ada field yang diupdate" });
+    }
+
+    values.push(code);
+    await getPool().query(
+      `UPDATE chart_of_accounts SET ${updates.join(", ")} WHERE code = ?`,
+      values,
+    );
+
+    const [updatedRow] = await getPool().query(
+      "SELECT code, name, parent_code, category, is_active, created_at, created_by FROM chart_of_accounts WHERE code = ?",
+      [code],
+    );
+
+    if (!updatedRow.length) {
+      return res.status(404).json({ message: "Akun tidak ditemukan" });
+    }
+
+    res.json({ account: normalizeChartOfAccount(updatedRow[0]) });
   } catch (error) {
     next(error);
   }

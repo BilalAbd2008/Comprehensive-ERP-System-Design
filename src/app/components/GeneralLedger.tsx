@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useData, ChartOfAccount, JournalDocument } from '../context/DataContext';
-import { Plus, Pencil, Check, X, Trash2, ChevronDown, ChevronUp, Download, Upload, Eye } from 'lucide-react';
+import { useData, JournalDocument } from '../context/DataContext';
+import { Plus, Pencil, Check, X, Trash2, ChevronDown, ChevronUp, Download, Eye } from 'lucide-react';
 
 export default function GeneralLedger() {
   const {
@@ -8,7 +8,6 @@ export default function GeneralLedger() {
     addJournalEntry,
     updateJournalEntry,
     deleteJournalEntry,
-    biologicalAssets,
     chartOfAccounts,
     addChartOfAccount,
     updateChartOfAccount,
@@ -16,16 +15,15 @@ export default function GeneralLedger() {
     getAccountsByParent,
     addJournalDocument,
     getJournalDocuments,
-    deleteJournalDocument,
     exportGeneralLedgerCSV,
   } = useData();
 
   const [showForm, setShowForm] = useState(false);
   const [editingJournalId, setEditingJournalId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [showCOAManager, setShowCOAManager] = useState(false);
   const [selectedTab, setSelectedTab] = useState<'journal' | 'coa'>('journal');
   const [expandedParents, setExpandedParents] = useState<string[]>([]);
+  const [editingAccountCode, setEditingAccountCode] = useState<string | null>(null);
 
   // New Account Form
   const [newAccount, setNewAccount] = useState({
@@ -33,6 +31,12 @@ export default function GeneralLedger() {
     name: '',
     parentCode: '',
     category: 'asset' as const,
+  });
+  const [editAccount, setEditAccount] = useState({
+    name: '',
+    parentCode: '',
+    category: 'asset' as const,
+    isActive: true,
   });
 
   // Journal Form
@@ -152,10 +156,76 @@ export default function GeneralLedger() {
     setNewAccount({ code: '', name: '', parentCode: '', category: 'asset' });
   };
 
-  const handleDeleteAccount = async (code: string) => {
-    if (window.confirm(`Hapus akun ${code}?`)) {
-      await deleteChartOfAccount(code);
+  const isDescendantAccount = (candidateCode: string, parentCode: string): boolean => {
+    let current = chartOfAccounts.find((account) => account.code === candidateCode);
+    while (current?.parentCode) {
+      if (current.parentCode === parentCode) return true;
+      current = chartOfAccounts.find((account) => account.code === current?.parentCode);
     }
+    return false;
+  };
+
+  const descendantAccountsFor = (accountCode: string) =>
+    chartOfAccounts.filter((account) => isDescendantAccount(account.code, accountCode));
+
+  const accountIsUsed = (code: string) =>
+    journalEntries.some(
+      (journal) =>
+        journal.debitAccount.includes(code) ||
+        journal.creditAccount.includes(code),
+    );
+
+  const handleDeleteAccount = async (code: string) => {
+    const descendants = descendantAccountsFor(code);
+    const accountsToDelete = [...descendants, ...chartOfAccounts.filter((account) => account.code === code)]
+      .sort((a, b) => b.code.length - a.code.length);
+    const usedAccount = accountsToDelete.find((account) => accountIsUsed(account.code));
+
+    if (usedAccount) {
+      alert(`Tidak bisa hapus akun ${usedAccount.code} karena sudah digunakan dalam jurnal`);
+      return;
+    }
+
+    const message =
+      descendants.length > 0
+        ? `Hapus akun ${code} beserta ${descendants.length} child akun?`
+        : `Hapus akun ${code}?`;
+
+    if (!window.confirm(message)) return;
+
+    for (const account of accountsToDelete) {
+      await deleteChartOfAccount(account.code);
+    }
+  };
+
+  const parentOptionsFor = (accountCode?: string) =>
+    chartOfAccounts.filter((account) => {
+      if (!accountCode) return !account.parentCode;
+      if (account.code === accountCode) return false;
+      return !isDescendantAccount(account.code, accountCode);
+    });
+
+  const startEditAccount = (accountCode: string) => {
+    const account = chartOfAccounts.find((item) => item.code === accountCode);
+    if (!account) return;
+    setEditingAccountCode(accountCode);
+    setEditAccount({
+      name: account.name,
+      parentCode: account.parentCode || '',
+      category: account.category,
+      isActive: account.isActive,
+    });
+  };
+
+  const saveEditAccount = async () => {
+    if (!editingAccountCode) return;
+    await updateChartOfAccount(editingAccountCode, {
+      name: editAccount.name.trim(),
+      parentCode: editAccount.parentCode || null,
+      category: editAccount.category,
+      isActive: editAccount.isActive,
+    });
+    setEditingAccountCode(null);
   };
 
   const toggleParentExpand = (parentCode: string) => {
@@ -234,15 +304,38 @@ export default function GeneralLedger() {
 
   const saveEditJournal = async () => {
     if (!editingJournalId) return;
+    const debitAmount = Number(editFormData.debitAmount);
+    const creditAmount = Number(editFormData.creditAmount);
+
+    if (!editFormData.date || !editFormData.description.trim()) {
+      alert('Tanggal dan deskripsi wajib diisi');
+      return;
+    }
+
+    if (!editFormData.debitAccount || !editFormData.creditAccount) {
+      alert('Akun debit dan kredit wajib dipilih');
+      return;
+    }
+
+    if (!Number.isFinite(debitAmount) || !Number.isFinite(creditAmount) || debitAmount <= 0 || creditAmount <= 0) {
+      alert('Nominal debit dan kredit harus lebih dari 0');
+      return;
+    }
+
+    if (debitAmount !== creditAmount) {
+      alert('Nominal debit dan kredit harus sama');
+      return;
+    }
+
     await updateJournalEntry(editingJournalId, {
       date: editFormData.date,
-      description: editFormData.description,
+      description: editFormData.description.trim(),
       debitAccount: editFormData.debitAccount,
       debitAssetId: editFormData.debitAssetId || undefined,
-      debitAmount: Number(editFormData.debitAmount),
+      debitAmount,
       creditAccount: editFormData.creditAccount,
       creditAssetId: editFormData.creditAssetId || undefined,
-      creditAmount: Number(editFormData.creditAmount),
+      creditAmount,
     });
     setEditingJournalId(null);
   };
@@ -280,6 +373,20 @@ export default function GeneralLedger() {
     );
   };
 
+  const renderAccountOptions = () =>
+    chartOfAccounts.filter(a => !a.parentCode).map((acc) => (
+      <optgroup key={acc.code} label={`${acc.code} ${acc.name}`}>
+        <option value={`${acc.code} ${acc.name}`}>
+          {acc.code} {acc.name}
+        </option>
+        {getAccountsByParent(acc.code).map(child => (
+          <option key={child.code} value={`${child.code} ${child.name}`}>
+            {child.code} {child.name}
+          </option>
+        ))}
+      </optgroup>
+    ));
+
   const renderCOAHierarchy = (parentCode?: string, level = 0) => {
     const childAccounts = getAccountsByParent(parentCode);
     if (childAccounts.length === 0 && parentCode) return null;
@@ -306,15 +413,79 @@ export default function GeneralLedger() {
               </button>
             )}
             {!hasChildren && <div className="w-6" />}
-            <span className="text-sm font-mono font-semibold">{account.code}</span>
-            <span className="text-sm flex-1">{account.name}</span>
-            <button
-              onClick={() => handleDeleteAccount(account.code)}
-              className="p-1 rounded opacity-0 hover:opacity-100"
-              style={{ backgroundColor: '#FFE5E5' }}
-            >
-              <Trash2 size={12} />
-            </button>
+            {editingAccountCode === account.code ? (
+              <>
+                <span className="text-sm font-mono font-semibold w-24">{account.code}</span>
+                <input
+                  type="text"
+                  value={editAccount.name}
+                  onChange={(e) => setEditAccount({ ...editAccount, name: e.target.value })}
+                  className="px-2 py-1 border rounded text-sm flex-1"
+                  style={{ borderColor: '#DEE2E6' }}
+                />
+                <select
+                  value={editAccount.parentCode}
+                  onChange={(e) => setEditAccount({ ...editAccount, parentCode: e.target.value })}
+                  className="px-2 py-1 border rounded text-sm"
+                  style={{ borderColor: '#DEE2E6' }}
+                >
+                  <option value="">Tidak ada parent</option>
+                  {parentOptionsFor(account.code).map(parent => (
+                    <option key={parent.code} value={parent.code}>
+                      {parent.code} - {parent.name}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={editAccount.category}
+                  onChange={(e) => setEditAccount({ ...editAccount, category: e.target.value as any })}
+                  className="px-2 py-1 border rounded text-sm"
+                  style={{ borderColor: '#DEE2E6' }}
+                >
+                  <option value="asset">Asset</option>
+                  <option value="liability">Liability</option>
+                  <option value="equity">Equity</option>
+                  <option value="revenue">Revenue</option>
+                  <option value="expense">Expense</option>
+                </select>
+                <button
+                  onClick={saveEditAccount}
+                  className="p-1.5 rounded"
+                  style={{ backgroundColor: '#1B4332', color: 'white' }}
+                >
+                  <Check size={13} />
+                </button>
+                <button
+                  onClick={() => setEditingAccountCode(null)}
+                  className="p-1.5 rounded"
+                  style={{ backgroundColor: '#DC3545', color: 'white' }}
+                >
+                  <X size={13} />
+                </button>
+              </>
+            ) : (
+              <>
+                <span className="text-sm font-mono font-semibold">{account.code}</span>
+                <span className="text-sm flex-1">{account.name}</span>
+                <span className="text-xs px-2 py-1 rounded" style={{ backgroundColor: '#E9ECEF', color: '#495057' }}>
+                  {account.parentCode ? `Child dari ${account.parentCode}` : 'Parent'}
+                </span>
+                <button
+                  onClick={() => startEditAccount(account.code)}
+                  className="p-1 rounded"
+                  style={{ backgroundColor: '#FFF3CD', color: '#856404' }}
+                >
+                  <Pencil size={12} />
+                </button>
+                <button
+                  onClick={() => handleDeleteAccount(account.code)}
+                  className="p-1 rounded"
+                  style={{ backgroundColor: '#FFE5E5', color: '#DC3545' }}
+                >
+                  <Trash2 size={12} />
+                </button>
+              </>
+            )}
           </div>
           {isExpanded && hasChildren && renderCOAHierarchy(account.code, level + 1)}
         </div>
@@ -587,7 +758,7 @@ export default function GeneralLedger() {
                               type="date"
                               value={editFormData.date}
                               onChange={(e) => setEditFormData({ ...editFormData, date: e.target.value })}
-                              className="w-20 px-2 py-1 border rounded text-xs"
+                              className="w-32 px-2 py-1 border rounded text-xs"
                               style={{ borderColor: '#DEE2E6' }}
                             />
                           </td>
@@ -600,8 +771,48 @@ export default function GeneralLedger() {
                               style={{ borderColor: '#DEE2E6' }}
                             />
                           </td>
-                          <td colSpan={5} className="px-3 py-2 text-xs" style={{ color: '#6C757D' }}>
-                            Edit mode simplified - debit/kredit akan ditampilkan setelah simpan
+                          <td className="px-3 py-2">
+                            <select
+                              value={editFormData.debitAccount}
+                              onChange={(e) => setEditFormData({ ...editFormData, debitAccount: e.target.value })}
+                              className="w-52 px-2 py-1 border rounded text-xs"
+                              style={{ borderColor: '#DEE2E6' }}
+                            >
+                              <option value="">Pilih Akun Debit</option>
+                              {renderAccountOptions()}
+                            </select>
+                          </td>
+                          <td className="px-3 py-2">
+                            <input
+                              type="number"
+                              value={editFormData.debitAmount}
+                              onChange={(e) => setEditFormData({ ...editFormData, debitAmount: e.target.value })}
+                              className="w-28 px-2 py-1 border rounded text-xs text-right"
+                              style={{ borderColor: '#DEE2E6' }}
+                            />
+                          </td>
+                          <td className="px-3 py-2">
+                            <select
+                              value={editFormData.creditAccount}
+                              onChange={(e) => setEditFormData({ ...editFormData, creditAccount: e.target.value })}
+                              className="w-52 px-2 py-1 border rounded text-xs"
+                              style={{ borderColor: '#DEE2E6' }}
+                            >
+                              <option value="">Pilih Akun Kredit</option>
+                              {renderAccountOptions()}
+                            </select>
+                          </td>
+                          <td className="px-3 py-2">
+                            <input
+                              type="number"
+                              value={editFormData.creditAmount}
+                              onChange={(e) => setEditFormData({ ...editFormData, creditAmount: e.target.value })}
+                              className="w-28 px-2 py-1 border rounded text-xs text-right"
+                              style={{ borderColor: '#DEE2E6' }}
+                            />
+                          </td>
+                          <td className="px-3 py-2 text-center">
+                            {renderDocumentButtons(entry.id)}
                           </td>
                           <td className="px-3 py-2">
                             <div className="flex gap-1 justify-center">

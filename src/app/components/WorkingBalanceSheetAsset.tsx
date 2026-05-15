@@ -1,4 +1,5 @@
 import { useData } from '../context/DataContext';
+import { createBalanceReader } from '../utils/financialCalculations';
 
 export default function WorkingBalanceSheetAsset() {
   const { journalEntries, biologicalAssets, chartOfAccounts } = useData();
@@ -10,43 +11,109 @@ export default function WorkingBalanceSheetAsset() {
       minimumFractionDigits: 0,
     }).format(value);
   };
+  const formatBalance = (value: number) => {
+    if (value > 0) return formatCurrency(value);
+    if (value < 0) return `(${formatCurrency(Math.abs(value))})`;
+    return '-';
+  };
 
-  const accountCode = (account: string) => account.split(' ')[0] || account;
-
-  // Calculate balances from GL
-  const balances: Record<string, number> = {};
-  journalEntries.forEach(entry => {
-    const debitCode = accountCode(entry.debitAccount);
-    const creditCode = accountCode(entry.creditAccount);
-    if (!balances[debitCode]) balances[debitCode] = 0;
-    if (!balances[creditCode]) balances[creditCode] = 0;
-    balances[debitCode] += entry.debitAmount;
-    balances[creditCode] -= entry.creditAmount;
-  });
-
-  const childAccounts = (parentCode: string) =>
-    chartOfAccounts
-      .filter(account => account.parentCode === parentCode)
-      .sort((a, b) => a.code.localeCompare(b.code));
-
-  const balanceByCode = (code: string) => balances[code] || 0;
-  const balanceIncludingChildren = (code: string): number =>
-    balanceByCode(code) + childAccounts(code).reduce((sum, child) => sum + balanceIncludingChildren(child.code), 0);
+  const { childrenOf: childAccounts, balanceIncludingChildren, accountLabel, topAccountsByCategory } =
+    createBalanceReader(journalEntries, chartOfAccounts);
 
   // ASET LANCAR
-  const kas = balanceIncludingChildren('1-1100');
-  const bank = balanceIncludingChildren('1-1200');
-  const persediaanPakan = balanceIncludingChildren('1-2100');
-  const totalAsetLancar = kas + bank + persediaanPakan;
+  const currentAssetAccounts = topAccountsByCategory('asset').filter(
+    (account) =>
+      (account.code.startsWith('1-1') || account.code.startsWith('1-2')) &&
+      !account.code.startsWith('1-3000'),
+  );
+  const totalAsetLancar = currentAssetAccounts.reduce(
+    (sum, account) => sum + balanceIncludingChildren(account.code),
+    0,
+  );
 
   // ASET TIDAK LANCAR
-  const asetBiologis = balanceIncludingChildren('1-3000');
-  const asetTetap = balanceIncludingChildren('1-4100');
-  const akumulasiPenyusutan = Math.abs(balanceIncludingChildren('1-4200'));
+  const asetBiologis = biologicalAssets.reduce(
+    (sum, asset) => sum + Number(asset.fairValue || 0),
+    0,
+  );
+  const isAccumulatedDepreciation = (account: { code: string; name: string }) =>
+    account.code.startsWith('1-42') ||
+    account.name.toLowerCase().includes('akumulasi') ||
+    account.name.toLowerCase().includes('penyusutan');
+  const fixedAssetAccounts = topAccountsByCategory('asset').filter(
+    (account) => account.code.startsWith('1-4') && !isAccumulatedDepreciation(account),
+  );
+  const accumulatedDepreciationAccounts = topAccountsByCategory('asset').filter(
+    (account) => account.code.startsWith('1-4') && isAccumulatedDepreciation(account),
+  );
+  const asetTetap = fixedAssetAccounts.reduce(
+    (sum, account) => sum + balanceIncludingChildren(account.code),
+    0,
+  );
+  const akumulasiPenyusutan = accumulatedDepreciationAccounts.reduce(
+    (sum, account) => sum + Math.abs(balanceIncludingChildren(account.code)),
+    0,
+  );
   const asetTetapNeto = asetTetap - akumulasiPenyusutan;
   const totalAsetTidakLancar = asetBiologis + asetTetapNeto;
 
   const totalAset = totalAsetLancar + totalAsetTidakLancar;
+  const renderAccountWithChildren = (account: { code: string; name: string }) => {
+    const amount = balanceIncludingChildren(account.code);
+    const children = childAccounts(account.code);
+
+    return (
+      <div key={account.code} className="py-2">
+        <div className="grid grid-cols-2">
+          <span className="text-sm" style={{ color: '#495057' }}>{account.name}</span>
+          <span className="text-sm text-right" style={{ color: '#212529' }}>
+            {formatBalance(amount)}
+          </span>
+        </div>
+        {children.map(child => {
+          const childAmount = balanceIncludingChildren(child.code);
+          return (
+            <div key={child.code} className="grid grid-cols-2 pl-4 py-1">
+              <span className="text-xs" style={{ color: '#6C757D' }}>
+                {child.code} - {child.name}
+              </span>
+              <span className="text-xs text-right" style={{ color: '#212529' }}>
+                {formatBalance(childAmount)}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+  const renderContraAccountWithChildren = (account: { code: string; name: string }) => {
+    const amount = Math.abs(balanceIncludingChildren(account.code));
+    const children = childAccounts(account.code);
+
+    return (
+      <div key={account.code} className="py-1">
+        <div className="grid grid-cols-2 pl-4">
+          <span className="text-sm" style={{ color: '#6C757D' }}>{account.name}</span>
+          <span className="text-sm text-right" style={{ color: '#DC3545' }}>
+            {amount > 0 ? `(${formatCurrency(amount)})` : '-'}
+          </span>
+        </div>
+        {children.map(child => {
+          const childAmount = Math.abs(balanceIncludingChildren(child.code));
+          return (
+            <div key={child.code} className="grid grid-cols-2 pl-8 py-1">
+              <span className="text-xs" style={{ color: '#6C757D' }}>
+                {child.code} - {child.name}
+              </span>
+              <span className="text-xs text-right" style={{ color: '#DC3545' }}>
+                {childAmount > 0 ? `(${formatCurrency(childAmount)})` : '-'}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
 
   return (
     <div className="p-8">
@@ -75,45 +142,7 @@ export default function WorkingBalanceSheetAsset() {
             </div>
 
             <div className="space-y-1 pl-6">
-              <div className="grid grid-cols-2 py-2">
-                <span className="text-sm" style={{ color: '#495057' }}>Kas</span>
-                <span className="text-sm text-right" style={{ color: '#212529' }}>
-                  {kas > 0 ? formatCurrency(kas) : '-'}
-                </span>
-              </div>
-
-              <div className="grid grid-cols-2 py-2">
-                <span className="text-sm" style={{ color: '#495057' }}>Bank</span>
-                <span className="text-sm text-right" style={{ color: '#212529' }}>
-                  {bank > 0 ? formatCurrency(bank) : '-'}
-                </span>
-              </div>
-              {childAccounts('1-1200').map(account => {
-                const amount = balanceIncludingChildren(account.code);
-                return (
-                  <div key={account.code} className="grid grid-cols-2 pl-4 py-1">
-                    <span className="text-xs" style={{ color: '#6C757D' }}>
-                      {account.code} - {account.name}
-                    </span>
-                    <span className="text-xs text-right" style={{ color: '#212529' }}>
-                      {amount > 0 ? formatCurrency(amount) : '-'}
-                    </span>
-                  </div>
-                );
-              })}
-
-              <div className="py-2">
-                <div className="grid grid-cols-2">
-                  <span className="text-sm" style={{ color: '#495057' }}>Persediaan</span>
-                  <span></span>
-                </div>
-                <div className="grid grid-cols-2 pl-4 py-1">
-                  <span className="text-sm" style={{ color: '#6C757D' }}>Persediaan Pakan</span>
-                  <span className="text-sm text-right" style={{ color: '#212529' }}>
-                    {persediaanPakan > 0 ? formatCurrency(persediaanPakan) : '-'}
-                  </span>
-                </div>
-              </div>
+              {currentAssetAccounts.map(renderAccountWithChildren)}
             </div>
 
             <div className="grid grid-cols-2 py-3 px-3 mt-2" style={{ backgroundColor: '#FFB703' }}>
@@ -133,7 +162,7 @@ export default function WorkingBalanceSheetAsset() {
             <div className="space-y-1 pl-6">
               <div className="py-2">
                 <div className="grid grid-cols-2 mb-2">
-                  <span className="text-sm" style={{ color: '#495057' }}>Aset Biologis (PSAK 241)</span>
+                  <span className="text-sm" style={{ color: '#495057' }}>{accountLabel('1-3000', 'Aset Biologis')} (PSAK 241)</span>
                   <span></span>
                 </div>
                 {biologicalAssets.map((asset, idx) => (
@@ -159,18 +188,8 @@ export default function WorkingBalanceSheetAsset() {
                   <span className="text-sm" style={{ color: '#495057' }}>Aset Tetap</span>
                   <span></span>
                 </div>
-                <div className="grid grid-cols-2 pl-4 py-1">
-                  <span className="text-sm" style={{ color: '#6C757D' }}>Kandang dan Bangunan</span>
-                  <span className="text-sm text-right" style={{ color: '#212529' }}>
-                    {asetTetap > 0 ? formatCurrency(asetTetap) : '-'}
-                  </span>
-                </div>
-                <div className="grid grid-cols-2 pl-4 py-1">
-                  <span className="text-sm" style={{ color: '#6C757D' }}>Akumulasi Penyusutan</span>
-                  <span className="text-sm text-right" style={{ color: '#DC3545' }}>
-                    {akumulasiPenyusutan > 0 ? `(${formatCurrency(akumulasiPenyusutan)})` : '-'}
-                  </span>
-                </div>
+                {fixedAssetAccounts.map(renderAccountWithChildren)}
+                {accumulatedDepreciationAccounts.map(renderContraAccountWithChildren)}
                 <div className="grid grid-cols-2 pl-4 py-2 border-t mt-1" style={{ borderColor: '#DEE2E6' }}>
                   <span className="text-sm" style={{ color: '#1B4332' }}>Subtotal Aset Tetap (Neto)</span>
                   <span className="text-sm text-right" style={{ color: '#1B4332' }}>

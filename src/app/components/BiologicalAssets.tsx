@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useData } from '../context/DataContext';
-import { Edit2, Check, X, QrCode, Scan, Plus, Trash2, ChevronDown, ChevronUp } from 'lucide-react';
+import { Edit2, Check, X, QrCode, Scan, Plus, Trash2 } from 'lucide-react';
 import QRCodeDisplay from './QRCodeDisplay';
 
 export default function BiologicalAssets() {
@@ -11,15 +11,16 @@ export default function BiologicalAssets() {
     addBiologicalAsset,
     deleteBiologicalAsset,
     fairValuePerKg,
-    setFairValuePerKg,
+    fairValuePerKgByType,
+    animalTypes,
+    setFairValuePerKgForType,
+    addAnimalType,
   } = useData();
   
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editData, setEditData] = useState({
     weight: 0,
     purchasePrice: 0,
-    profit: 0,
-    loss: 0,
     lastUpdated: '',
     manualDate: false,
   });
@@ -27,20 +28,21 @@ export default function BiologicalAssets() {
   const [scanMode, setScanMode] = useState(false);
   const [scanInput, setScanInput] = useState('');
   const [showAddForm, setShowAddForm] = useState(false);
-  const [expandedAssetId, setExpandedAssetId] = useState<string | null>(null);
-  const [pricePerKgInput, setPricePerKgInput] = useState<string>(String(fairValuePerKg));
+  const [pricePerKgInput, setPricePerKgInput] = useState<string>('');
+  const [purchasePriceInput, setPurchasePriceInput] = useState('');
+  const [newTypeName, setNewTypeName] = useState('');
+  const [newTypePrice, setNewTypePrice] = useState('');
   
   const [newAsset, setNewAsset] = useState({
     tagId: '',
-    type: 'Domba' as 'Domba' | 'Kambing',
+    type: 'Domba',
     age: 0,
     weight: 0,
-    purchasePrice: 0,
   });
 
   useEffect(() => {
-    setPricePerKgInput(String(fairValuePerKg));
-  }, [fairValuePerKg]);
+    setPricePerKgInput(String(fairValuePerKgByType[newAsset.type] || fairValuePerKg));
+  }, [fairValuePerKgByType, fairValuePerKg, newAsset.type]);
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('id-ID', {
@@ -55,25 +57,24 @@ export default function BiologicalAssets() {
     setEditData({
       weight: asset.weight,
       purchasePrice: asset.purchasePrice || 0,
-      profit: asset.profit || 0,
-      loss: asset.loss || 0,
       lastUpdated: asset.lastUpdated,
       manualDate: false,
     });
   };
 
+  const getPricePerKgForType = (type: string) =>
+    fairValuePerKgByType[type] || fairValuePerKg;
+
   const handleSave = async (id: string) => {
     const asset = biologicalAssets.find(a => a.id === id);
     if (!asset) return;
 
-    const newFairValue = editData.weight * fairValuePerKg;
+    const newFairValue = editData.weight * getPricePerKgForType(asset.type);
 
     await updateBiologicalAsset(id, {
       weight: editData.weight,
       fairValue: newFairValue,
       purchasePrice: editData.purchasePrice,
-      profit: editData.profit || 0,
-      loss: editData.loss || 0,
       lastUpdated: editData.manualDate ? editData.lastUpdated : new Date().toISOString().split('T')[0],
     });
 
@@ -97,8 +98,8 @@ export default function BiologicalAssets() {
 
   const handleAddAsset = async (e: React.FormEvent) => {
     e.preventDefault();
-    const fairValue = newAsset.weight * fairValuePerKg;
-    const purchasePrice = newAsset.purchasePrice || fairValue;
+    const fairValue = newAsset.weight * getPricePerKgForType(newAsset.type);
+    const purchasePrice = Number(purchasePriceInput || 0);
     await addBiologicalAsset({
       ...newAsset,
       fairValue,
@@ -106,12 +107,14 @@ export default function BiologicalAssets() {
       profit: Math.max(fairValue - purchasePrice, 0),
       loss: Math.max(purchasePrice - fairValue, 0),
     });
-    setNewAsset({ tagId: '', type: 'Domba', age: 0, weight: 0, purchasePrice: 0 });
+    setNewAsset({ tagId: '', type: animalTypes[0] || 'Domba', age: 0, weight: 0 });
+    setPurchasePriceInput('');
     setShowAddForm(false);
   };
 
-  const newAssetFairValue = newAsset.weight * fairValuePerKg;
-  const newAssetPurchasePrice = newAsset.purchasePrice || newAssetFairValue;
+  const selectedPricePerKg = getPricePerKgForType(newAsset.type);
+  const newAssetFairValue = newAsset.weight * selectedPricePerKg;
+  const newAssetPurchasePrice = Number(purchasePriceInput || 0);
   const newAssetProfit = Math.max(newAssetFairValue - newAssetPurchasePrice, 0);
   const newAssetLoss = Math.max(newAssetPurchasePrice - newAssetFairValue, 0);
 
@@ -127,7 +130,17 @@ export default function BiologicalAssets() {
       alert('Harga per kg harus lebih dari 0');
       return;
     }
-    await setFairValuePerKg(parsed);
+    await setFairValuePerKgForType(newAsset.type, parsed);
+  };
+
+  const handleAddAnimalType = async () => {
+    const parsed = Number(newTypePrice);
+    await addAnimalType(newTypeName, parsed);
+    if (newTypeName.trim() && Number.isFinite(parsed) && parsed > 0) {
+      setNewAsset({ ...newAsset, type: newTypeName.trim() });
+      setNewTypeName('');
+      setNewTypePrice('');
+    }
   };
 
   return (
@@ -168,7 +181,7 @@ export default function BiologicalAssets() {
           </h2>
           <div className="mb-4 p-4 rounded" style={{ backgroundColor: '#F8F9FA' }}>
             <label className="block text-sm mb-2" style={{ color: '#495057' }}>
-              Harga per Kg (Nilai Wajar)
+              Harga per Kg (Nilai Wajar) untuk {newAsset.type}
             </label>
             <div className="flex gap-3">
               <input
@@ -189,8 +202,35 @@ export default function BiologicalAssets() {
               </button>
             </div>
             <p className="text-xs mt-2" style={{ color: '#6C757D' }}>
-              Harga saat ini: Rp {Number(fairValuePerKg).toLocaleString('id-ID')}/kg
+              Harga {newAsset.type} saat ini: Rp {Number(selectedPricePerKg).toLocaleString('id-ID')}/kg. Mengubah harga ini akan memperbarui semua aset {newAsset.type}.
             </p>
+            <div className="mt-4 grid grid-cols-3 gap-3">
+              <input
+                type="text"
+                value={newTypeName}
+                onChange={(e) => setNewTypeName(e.target.value)}
+                placeholder="Tambah jenis hewan"
+                className="px-3 py-2 border rounded"
+                style={{ borderColor: '#DEE2E6' }}
+              />
+              <input
+                type="number"
+                value={newTypePrice}
+                onChange={(e) => setNewTypePrice(e.target.value)}
+                placeholder="Harga/kg awal"
+                className="px-3 py-2 border rounded"
+                style={{ borderColor: '#DEE2E6' }}
+                min={1}
+              />
+              <button
+                type="button"
+                onClick={handleAddAnimalType}
+                className="px-4 py-2 rounded"
+                style={{ backgroundColor: '#FFB703', color: '#212529' }}
+              >
+                Tambah Jenis
+              </button>
+            </div>
           </div>
           <form onSubmit={handleAddAsset} className="space-y-4">
             <div className="grid grid-cols-3 gap-4">
@@ -210,12 +250,13 @@ export default function BiologicalAssets() {
                 <label className="block text-sm mb-2" style={{ color: '#495057' }}>Jenis</label>
                 <select
                   value={newAsset.type}
-                  onChange={(e) => setNewAsset({ ...newAsset, type: e.target.value as 'Domba' | 'Kambing' })}
+                  onChange={(e) => setNewAsset({ ...newAsset, type: e.target.value })}
                   className="w-full px-3 py-2 border rounded"
                   style={{ borderColor: '#DEE2E6' }}
                 >
-                  <option value="Domba">Domba</option>
-                  <option value="Kambing">Kambing</option>
+                  {animalTypes.map((type) => (
+                    <option key={type} value={type}>{type}</option>
+                  ))}
                 </select>
               </div>
               <div>
@@ -244,27 +285,32 @@ export default function BiologicalAssets() {
                 <label className="block text-sm mb-2" style={{ color: '#495057' }}>Harga Beli</label>
                 <input
                   type="number"
-                  value={newAsset.purchasePrice}
-                  onChange={(e) => setNewAsset({ ...newAsset, purchasePrice: Number(e.target.value) })}
-                  placeholder="Atau biarkan kosong"
+                  value={purchasePriceInput}
+                  onChange={(e) => setPurchasePriceInput(e.target.value)}
+                  placeholder="Isi manual"
                   className="w-full px-3 py-2 border rounded"
-                  style={{ borderColor: '#DEE2E6' }}
+                  style={{
+                    borderColor: purchasePriceInput ? '#FFB703' : '#DEE2E6',
+                    backgroundColor: purchasePriceInput ? '#FFF3CD' : 'white',
+                  }}
                 />
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className={`grid gap-4 ${purchasePriceInput ? 'grid-cols-2' : 'grid-cols-1'}`}>
               <div className="p-3 rounded" style={{ backgroundColor: '#E7F5E9' }}>
                 <div className="text-xs mb-1" style={{ color: '#495057' }}>Nilai Wajar Otomatis:</div>
                 <div className="text-base" style={{ color: '#1B4332' }}>
                   {formatCurrency(newAssetFairValue)}
                 </div>
               </div>
-              <div className="p-3 rounded" style={{ backgroundColor: '#FFF3CD' }}>
-                <div className="text-xs mb-1" style={{ color: '#495057' }}>Harga Beli:</div>
-                <div className="text-base" style={{ color: '#856404' }}>
-                  {formatCurrency(newAssetPurchasePrice)}
+              {purchasePriceInput && (
+                <div className="p-3 rounded" style={{ backgroundColor: '#FFF3CD' }}>
+                  <div className="text-xs mb-1" style={{ color: '#495057' }}>Harga Beli Manual:</div>
+                  <div className="text-base" style={{ color: '#856404' }}>
+                    {formatCurrency(newAssetPurchasePrice)}
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="p-3 rounded" style={{ backgroundColor: '#E7F5E9' }}>
@@ -396,18 +442,16 @@ export default function BiologicalAssets() {
                     )}
                   </td>
                   <td className="px-4 py-3 text-sm font-semibold">
-                    {formatCurrency(editingId === asset.id ? editData.weight * fairValuePerKg : asset.fairValue)}
+                    {formatCurrency(editingId === asset.id ? editData.weight * getPricePerKgForType(asset.type) : asset.fairValue)}
                   </td>
                   <td className="px-4 py-3 text-sm">
                     {editingId === asset.id ? (
-                      <input
-                        type="number"
-                        value={editData.profit}
-                        onChange={(e) => setEditData({ ...editData, profit: Number(e.target.value) })}
-                        placeholder="0"
-                        className="w-24 px-2 py-1 border rounded text-sm"
-                        style={{ borderColor: '#28A745' }}
-                      />
+                      <span style={{ color: '#28A745' }}>
+                        {formatCurrency(Math.max(
+                          editData.weight * getPricePerKgForType(asset.type) - editData.purchasePrice,
+                          0,
+                        ))}
+                      </span>
                     ) : (
                       <span style={{ color: asset.profit ? '#28A745' : '#6C757D' }}>
                         {formatCurrency(asset.profit || 0)}
@@ -416,14 +460,12 @@ export default function BiologicalAssets() {
                   </td>
                   <td className="px-4 py-3 text-sm">
                     {editingId === asset.id ? (
-                      <input
-                        type="number"
-                        value={editData.loss}
-                        onChange={(e) => setEditData({ ...editData, loss: Number(e.target.value) })}
-                        placeholder="0"
-                        className="w-24 px-2 py-1 border rounded text-sm"
-                        style={{ borderColor: '#DC3545' }}
-                      />
+                      <span style={{ color: '#DC3545' }}>
+                        {formatCurrency(Math.max(
+                          editData.purchasePrice - editData.weight * getPricePerKgForType(asset.type),
+                          0,
+                        ))}
+                      </span>
                     ) : (
                       <span style={{ color: asset.loss ? '#DC3545' : '#6C757D' }}>
                         {formatCurrency(asset.loss || 0)}

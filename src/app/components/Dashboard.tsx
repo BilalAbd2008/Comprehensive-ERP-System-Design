@@ -96,12 +96,31 @@ export default function Dashboard() {
     return sum;
   }, 0);
 
+  const monthlyBurnCost = journalEntries.reduce((sum, entry) => {
+    const isBurnExpense =
+      entry.debitAccount.includes("Beban Pakan") ||
+      entry.debitAccount.includes("Beban Gaji");
+    return isBurnExpense ? sum + Number(entry.debitAmount || 0) : sum;
+  }, 0);
+  const dailyBurnRate = monthlyBurnCost > 0 ? monthlyBurnCost / 30 : 0;
+
   const recentTransactions = useMemo(() => {
     return journalEntries
       .slice()
       .sort((a, b) => b.date.localeCompare(a.date))
       .slice(0, 5);
   }, [journalEntries]);
+
+  const populationByType = useMemo(() => {
+    const counts = biologicalAssets.reduce<Record<string, number>>((acc, asset) => {
+      acc[asset.type] = (acc[asset.type] || 0) + 1;
+      return acc;
+    }, {});
+
+    return Object.entries(counts)
+      .map(([type, count]) => `${count} ${type}`)
+      .join(", ");
+  }, [biologicalAssets]);
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat("id-ID", {
@@ -115,7 +134,7 @@ export default function Dashboard() {
     {
       label: "Total Populasi",
       value: `${totalPopulation} Ekor`,
-      subtitle: `${biologicalAssets.filter((a) => a.type === "Domba").length} Domba, ${biologicalAssets.filter((a) => a.type === "Kambing").length} Kambing`,
+      subtitle: populationByType || "Belum ada aset",
       icon: Activity,
       color: "#1B4332",
     },
@@ -138,8 +157,8 @@ export default function Dashboard() {
     },
     {
       label: "Burn Rate Harian",
-      value: formatCurrency(566667),
-      subtitle: "Pakan + Gaji (3 Karyawan)",
+      value: formatCurrency(dailyBurnRate),
+      subtitle: "Beban Pakan + Beban Gaji / 30 hari",
       icon: TrendingDown,
       color: "#DC3545",
     },

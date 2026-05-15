@@ -7,9 +7,13 @@ import {
   printReport,
   copyToClipboard,
 } from "../utils/reportPrinter";
+import {
+  calculateProfitLossSummary,
+  createBalanceReader,
+} from "../utils/financialCalculations";
 
 export default function BalanceSheet() {
-  const { journalEntries } = useData();
+  const { journalEntries, chartOfAccounts, biologicalAssets } = useData();
   const [isLoadingPDF, setIsLoadingPDF] = useState(false);
 
   const formatCurrency = (value: number) => {
@@ -21,66 +25,78 @@ export default function BalanceSheet() {
   };
 
   const calculateBalanceSheet = () => {
-    const balances: Record<string, number> = {};
-
-    journalEntries.forEach((entry) => {
-      if (!balances[entry.debitAccount]) balances[entry.debitAccount] = 0;
-      if (!balances[entry.creditAccount]) balances[entry.creditAccount] = 0;
-
-      balances[entry.debitAccount] += entry.debitAmount;
-      balances[entry.creditAccount] -= entry.creditAmount;
-    });
-
-    const kas = balances["1-1100 Kas"] || 0;
-    const bank = balances["1-1200 Bank"] || 0;
-    const persediaanPakan = balances["1-2100 Persediaan Pakan"] || 0;
-    const asetBiologis = balances["1-3000 Aset Biologis"] || 0;
-    const asetTetap = balances["1-4100 Aset Tetap - Kandang"] || 0;
-    const akumulasiPenyusutan = Math.abs(
-      balances["1-4200 Akumulasi Penyusutan"] || 0,
+    const {
+      balanceIncludingChildren,
+      creditBalance,
+      topAccountsByCategory,
+      accountLabel,
+    } = createBalanceReader(journalEntries, chartOfAccounts);
+    const { labaBersih: labaTahunBerjalan } = calculateProfitLossSummary(
+      journalEntries,
+      chartOfAccounts,
+      biologicalAssets,
     );
-    const hutangUsaha = Math.abs(balances["2-1000 Hutang Usaha"] || 0);
-    const modalDisetor = Math.abs(balances["3-1000 Modal Disetor"] || 0);
-
-    let pendapatan = 0;
-    let keuntunganNilaiWajar = 0;
-    let pendapatanLain = 0;
-    let hpp = 0;
-    let bebanGaji = 0;
-    let bebanPakan = 0;
-    let bebanPenyusutan = 0;
-    let bebanLain = 0;
-
-    journalEntries.forEach((entry) => {
-      if (entry.creditAccount.includes("Pendapatan Penjualan"))
-        pendapatan += entry.creditAmount;
-      if (entry.creditAccount.includes("Keuntungan Nilai Wajar"))
-        keuntunganNilaiWajar += entry.creditAmount;
-      if (entry.creditAccount.includes("Pendapatan Lain-lain"))
-        pendapatanLain += entry.creditAmount;
-      if (entry.debitAccount.includes("HPP")) hpp += entry.debitAmount;
-      if (entry.debitAccount.includes("Beban Gaji"))
-        bebanGaji += entry.debitAmount;
-      if (entry.debitAccount.includes("Beban Pakan"))
-        bebanPakan += entry.debitAmount;
-      if (entry.debitAccount.includes("Beban Penyusutan"))
-        bebanPenyusutan += entry.debitAmount;
-      if (entry.debitAccount.includes("Beban Lain-lain"))
-        bebanLain += entry.debitAmount;
-    });
-
-    const labaTahunBerjalan =
-      pendapatan +
-      keuntunganNilaiWajar +
-      pendapatanLain -
-      hpp -
-      bebanGaji -
-      bebanPakan -
-      bebanPenyusutan -
-      bebanLain;
+    const currentAssetRows = topAccountsByCategory("asset")
+      .filter(
+        (account) =>
+          (account.code.startsWith("1-1") || account.code.startsWith("1-2")) &&
+          !account.code.startsWith("1-3000"),
+      )
+      .map((account) => ({
+        code: account.code,
+        name: account.name,
+        amount: balanceIncludingChildren(account.code),
+      }));
+    const asetBiologis = biologicalAssets.reduce(
+      (sum, asset) => sum + Number(asset.fairValue || 0),
+      0,
+    );
+    const isAccumulatedDepreciation = (account: { code: string; name: string }) =>
+      account.code.startsWith("1-42") ||
+      account.name.toLowerCase().includes("akumulasi") ||
+      account.name.toLowerCase().includes("penyusutan");
+    const fixedAssetRows = topAccountsByCategory("asset")
+      .filter(
+        (account) =>
+          account.code.startsWith("1-4") && !isAccumulatedDepreciation(account),
+      )
+      .map((account) => ({
+        code: account.code,
+        name: account.name,
+        amount: balanceIncludingChildren(account.code),
+      }));
+    const accumulatedDepreciationRows = topAccountsByCategory("asset")
+      .filter(
+        (account) =>
+          account.code.startsWith("1-4") && isAccumulatedDepreciation(account),
+      )
+      .map((account) => ({
+        code: account.code,
+        name: account.name,
+        amount: Math.abs(balanceIncludingChildren(account.code)),
+      }));
+    const asetTetap = fixedAssetRows.reduce(
+      (sum, account) => sum + account.amount,
+      0,
+    );
+    const akumulasiPenyusutan = accumulatedDepreciationRows.reduce(
+      (sum, account) => sum + account.amount,
+      0,
+    );
+    const hutangUsaha = creditBalance("2-1000");
+    const equityCapitalAccounts = topAccountsByCategory("equity").filter(
+      (account) => account.code !== "3-2000",
+    );
+    const modalDisetor = equityCapitalAccounts.reduce(
+      (sum, account) => sum + creditBalance(account.code),
+      0,
+    );
     const labaDitahan = labaTahunBerjalan;
 
-    const totalAsetLancar = kas + bank + persediaanPakan;
+    const totalAsetLancar = currentAssetRows.reduce(
+      (sum, account) => sum + account.amount,
+      0,
+    );
     const totalAsetTidakLancar = asetBiologis + asetTetap - akumulasiPenyusutan;
     const totalAset = totalAsetLancar + totalAsetTidakLancar;
 
@@ -89,16 +105,24 @@ export default function BalanceSheet() {
     const totalLiabilitasDanEkuitas = totalLiabilitas + totalEkuitas;
 
     return {
-      kas,
-      bank,
-      persediaanPakan,
+      currentAssetRows,
       asetBiologis,
+      fixedAssetRows,
+      accumulatedDepreciationRows,
       asetTetap,
       akumulasiPenyusutan,
       hutangUsaha,
       modalDisetor,
       labaDitahan,
       labaTahunBerjalan,
+      labels: {
+        asetBiologis: accountLabel("1-3000", "Aset Biologis"),
+        hutangUsaha: accountLabel("2-1000", "Hutang Usaha"),
+        modalDisetor:
+          equityCapitalAccounts.length === 1
+            ? equityCapitalAccounts[0].name
+            : "Modal & Setoran Pemilik",
+      },
       totalAsetLancar,
       totalAsetTidakLancar,
       totalAset,
@@ -286,109 +310,81 @@ export default function BalanceSheet() {
                     </td>
                     <td></td>
                   </tr>
-                  <tr className="border-b" style={{ borderColor: "#DEE2E6" }}>
-                    <td
-                      className="px-6 py-2 pl-10 text-sm"
-                      style={{
-                        color: "#495057",
-                        borderRight: "2px solid #DEE2E6",
-                      }}
-                    >
-                      Kas
-                    </td>
-                    <td
-                      className="px-6 py-2 text-sm text-right"
-                      style={{
-                        color: "#212529",
-                        borderRight: "2px solid #DEE2E6",
-                      }}
-                    >
-                      {formatCurrency(bs.kas)}
-                    </td>
-                    <td
-                      className="px-6 py-2 pl-10 text-sm"
-                      style={{
-                        color: "#495057",
-                        borderLeft: "2px solid #DEE2E6",
-                        borderRight: "2px solid #DEE2E6",
-                      }}
-                    >
-                      Hutang Usaha
-                    </td>
-                    <td
-                      className="px-6 py-2 text-sm text-right"
-                      style={{ color: "#212529" }}
-                    >
-                      {formatCurrency(bs.hutangUsaha)}
-                    </td>
-                  </tr>
-                  <tr className="border-b" style={{ borderColor: "#DEE2E6" }}>
-                    <td
-                      className="px-6 py-2 pl-10 text-sm"
-                      style={{
-                        color: "#495057",
-                        borderRight: "2px solid #DEE2E6",
-                      }}
-                    >
-                      Bank
-                    </td>
-                    <td
-                      className="px-6 py-2 text-sm text-right"
-                      style={{
-                        color: "#212529",
-                        borderRight: "2px solid #DEE2E6",
-                      }}
-                    >
-                      {formatCurrency(bs.bank)}
-                    </td>
-                    <td
-                      style={{
-                        borderLeft: "2px solid #DEE2E6",
-                        borderRight: "2px solid #DEE2E6",
-                      }}
-                    ></td>
-                    <td></td>
-                  </tr>
-                  <tr className="border-b" style={{ borderColor: "#DEE2E6" }}>
-                    <td
-                      className="px-6 py-2 pl-10 text-sm"
-                      style={{
-                        color: "#495057",
-                        borderRight: "2px solid #DEE2E6",
-                      }}
-                    >
-                      Persediaan Pakan
-                    </td>
-                    <td
-                      className="px-6 py-2 text-sm text-right"
-                      style={{
-                        color: "#212529",
-                        borderRight: "2px solid #DEE2E6",
-                      }}
-                    >
-                      {formatCurrency(bs.persediaanPakan)}
-                    </td>
-                    <td
-                      className="px-6 py-3 text-sm"
-                      style={{
-                        color: "#1B4332",
-                        borderLeft: "2px solid #DEE2E6",
-                        borderRight: "2px solid #DEE2E6",
-                        borderTop: "2px solid #DEE2E6",
-                      }}
-                    >
-                      <strong>Total Liabilitas Lancar</strong>
-                    </td>
-                    <td
-                      className="px-6 py-3 text-sm text-right"
-                      style={{
-                        color: "#1B4332",
-                        borderTop: "2px solid #DEE2E6",
-                      }}
-                    >
-                      <strong>{formatCurrency(bs.totalLiabilitas)}</strong>
-                    </td>
-                  </tr>
+                  {bs.currentAssetRows.map((account, index) => (
+                    <tr key={account.code} className="border-b" style={{ borderColor: "#DEE2E6" }}>
+                      <td
+                        className="px-6 py-2 pl-10 text-sm"
+                        style={{
+                          color: "#495057",
+                          borderRight: "2px solid #DEE2E6",
+                        }}
+                      >
+                        {account.name}
+                      </td>
+                      <td
+                        className="px-6 py-2 text-sm text-right"
+                        style={{
+                          color: "#212529",
+                          borderRight: "2px solid #DEE2E6",
+                        }}
+                      >
+                        {formatCurrency(account.amount)}
+                      </td>
+                      {index === 0 ? (
+                        <>
+                          <td
+                            className="px-6 py-2 pl-10 text-sm"
+                            style={{
+                              color: "#495057",
+                              borderLeft: "2px solid #DEE2E6",
+                              borderRight: "2px solid #DEE2E6",
+                            }}
+                          >
+                            {bs.labels.hutangUsaha}
+                          </td>
+                          <td
+                            className="px-6 py-2 text-sm text-right"
+                            style={{ color: "#212529" }}
+                          >
+                            {formatCurrency(bs.hutangUsaha)}
+                          </td>
+                        </>
+                      ) : index === bs.currentAssetRows.length - 1 ? (
+                        <>
+                          <td
+                            className="px-6 py-3 text-sm"
+                            style={{
+                              color: "#1B4332",
+                              borderLeft: "2px solid #DEE2E6",
+                              borderRight: "2px solid #DEE2E6",
+                              borderTop: "2px solid #DEE2E6",
+                            }}
+                          >
+                            <strong>Total Liabilitas Lancar</strong>
+                          </td>
+                          <td
+                            className="px-6 py-3 text-sm text-right"
+                            style={{
+                              color: "#1B4332",
+                              borderTop: "2px solid #DEE2E6",
+                            }}
+                          >
+                            <strong>{formatCurrency(bs.totalLiabilitas)}</strong>
+                          </td>
+                        </>
+                      ) : (
+                        <>
+                          <td
+                            style={{
+                              borderLeft: "2px solid #DEE2E6",
+                              borderRight: "2px solid #DEE2E6",
+                            }}
+                          ></td>
+                          <td></td>
+                        </>
+                      )}
+                    </tr>
+                  ))}
                   <tr className="border-b" style={{ borderColor: "#DEE2E6" }}>
                     <td
                       className="px-6 py-3 text-sm"
@@ -441,7 +437,7 @@ export default function BalanceSheet() {
                         borderRight: "2px solid #DEE2E6",
                       }}
                     >
-                      Modal Disetor
+                      {bs.labels.modalDisetor}
                     </td>
                     <td
                       className="px-6 py-2 text-sm text-right"
@@ -458,7 +454,7 @@ export default function BalanceSheet() {
                         borderRight: "2px solid #DEE2E6",
                       }}
                     >
-                      Aset Biologis
+                      {bs.labels.asetBiologis}
                     </td>
                     <td
                       className="px-6 py-2 text-sm text-right"
@@ -486,52 +482,71 @@ export default function BalanceSheet() {
                       {formatCurrency(bs.labaDitahan)}
                     </td>
                   </tr>
+                  {bs.fixedAssetRows.map((account) => (
+                    <tr key={account.code} className="border-b" style={{ borderColor: "#DEE2E6" }}>
+                      <td
+                        className="px-6 py-2 pl-10 text-sm"
+                        style={{
+                          color: "#495057",
+                          borderRight: "2px solid #DEE2E6",
+                        }}
+                      >
+                        {account.name}
+                      </td>
+                      <td
+                        className="px-6 py-2 text-sm text-right"
+                        style={{
+                          color: "#212529",
+                          borderRight: "2px solid #DEE2E6",
+                        }}
+                      >
+                        {formatCurrency(account.amount)}
+                      </td>
+                      <td
+                        style={{
+                          borderLeft: "2px solid #DEE2E6",
+                          borderRight: "2px solid #DEE2E6",
+                        }}
+                      ></td>
+                      <td></td>
+                    </tr>
+                  ))}
+                  {bs.accumulatedDepreciationRows.map((account) => (
+                    <tr key={account.code} className="border-b" style={{ borderColor: "#DEE2E6" }}>
+                      <td
+                        className="px-6 py-2 pl-10 text-sm"
+                        style={{
+                          color: "#495057",
+                          borderRight: "2px solid #DEE2E6",
+                        }}
+                      >
+                        {account.name}
+                      </td>
+                      <td
+                        className="px-6 py-2 text-sm text-right"
+                        style={{
+                          color: "#212529",
+                          borderRight: "2px solid #DEE2E6",
+                        }}
+                      >
+                        ({formatCurrency(account.amount)})
+                      </td>
+                      <td
+                        style={{
+                          borderLeft: "2px solid #DEE2E6",
+                          borderRight: "2px solid #DEE2E6",
+                        }}
+                      ></td>
+                      <td></td>
+                    </tr>
+                  ))}
                   <tr className="border-b" style={{ borderColor: "#DEE2E6" }}>
                     <td
-                      className="px-6 py-2 pl-10 text-sm"
                       style={{
-                        color: "#495057",
-                        borderRight: "2px solid #DEE2E6",
-                      }}
-                    >
-                      Aset Tetap - Kandang
-                    </td>
-                    <td
-                      className="px-6 py-2 text-sm text-right"
-                      style={{
-                        color: "#212529",
-                        borderRight: "2px solid #DEE2E6",
-                      }}
-                    >
-                      {formatCurrency(bs.asetTetap)}
-                    </td>
-                    <td
-                      style={{
-                        borderLeft: "2px solid #DEE2E6",
                         borderRight: "2px solid #DEE2E6",
                       }}
                     ></td>
-                    <td></td>
-                  </tr>
-                  <tr className="border-b" style={{ borderColor: "#DEE2E6" }}>
-                    <td
-                      className="px-6 py-2 pl-10 text-sm"
-                      style={{
-                        color: "#495057",
-                        borderRight: "2px solid #DEE2E6",
-                      }}
-                    >
-                      Akumulasi Penyusutan
-                    </td>
-                    <td
-                      className="px-6 py-2 text-sm text-right"
-                      style={{
-                        color: "#212529",
-                        borderRight: "2px solid #DEE2E6",
-                      }}
-                    >
-                      ({formatCurrency(bs.akumulasiPenyusutan)})
-                    </td>
+                    <td style={{ borderRight: "2px solid #DEE2E6" }}></td>
                     <td
                       className="px-6 py-3 text-sm"
                       style={{

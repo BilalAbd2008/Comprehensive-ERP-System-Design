@@ -2,6 +2,12 @@ import { useState } from "react";
 import { useData } from "../context/DataContext";
 import { Download, Eye, Printer, Copy } from "lucide-react";
 import {
+  accountCode,
+  accountNameFromJournal,
+  calculateBalancesByCode,
+  buildCoaMaps,
+} from "../utils/financialCalculations";
+import {
   downloadPDF,
   previewPDF,
   printReport,
@@ -9,7 +15,7 @@ import {
 } from "../utils/reportPrinter";
 
 export default function TrialBalance() {
-  const { journalEntries } = useData();
+  const { journalEntries, chartOfAccounts } = useData();
   const [isLoadingPDF, setIsLoadingPDF] = useState(false);
 
   const formatCurrency = (value: number) => {
@@ -21,26 +27,27 @@ export default function TrialBalance() {
   };
 
   const calculateTrialBalance = () => {
-    const balances: Record<string, { debit: number; credit: number }> = {};
+    const balances = calculateBalancesByCode(journalEntries);
+    const { byCode } = buildCoaMaps(chartOfAccounts);
+    const fallbackNames = new Map<string, string>();
 
     journalEntries.forEach((entry) => {
-      if (!balances[entry.debitAccount]) {
-        balances[entry.debitAccount] = { debit: 0, credit: 0 };
-      }
-      if (!balances[entry.creditAccount]) {
-        balances[entry.creditAccount] = { debit: 0, credit: 0 };
-      }
-
-      balances[entry.debitAccount].debit += entry.debitAmount;
-      balances[entry.creditAccount].credit += entry.creditAmount;
+      fallbackNames.set(
+        accountCode(entry.debitAccount),
+        accountNameFromJournal(entry.debitAccount),
+      );
+      fallbackNames.set(
+        accountCode(entry.creditAccount),
+        accountNameFromJournal(entry.creditAccount),
+      );
     });
 
     return Object.entries(balances)
-      .map(([account, balance]) => ({
-        code: account.split(" ")[0],
-        name: account.split(" ").slice(1).join(" "),
-        debit: balance.debit,
-        credit: balance.credit,
+      .map(([code, balance]) => ({
+        code,
+        name: byCode.get(code)?.name || fallbackNames.get(code) || code,
+        debit: balance >= 0 ? balance : 0,
+        credit: balance < 0 ? Math.abs(balance) : 0,
       }))
       .sort((a, b) => a.code.localeCompare(b.code));
   };
