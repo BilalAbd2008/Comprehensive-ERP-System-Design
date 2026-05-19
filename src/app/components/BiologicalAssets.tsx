@@ -15,6 +15,7 @@ export default function BiologicalAssets() {
     animalTypes,
     setFairValuePerKgForType,
     addAnimalType,
+    admins,
   } = useData();
   
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -64,6 +65,12 @@ export default function BiologicalAssets() {
 
   const getPricePerKgForType = (type: string) =>
     fairValuePerKgByType[type] || fairValuePerKg;
+
+  const adminLabel = (username?: string) => {
+    if (!username) return '-';
+    const admin = admins.find((item) => item.username === username);
+    return admin ? `${admin.fullName} (@${admin.username})` : `@${username}`;
+  };
 
   const handleSave = async (id: string) => {
     const asset = biologicalAssets.find(a => a.id === id);
@@ -119,7 +126,7 @@ export default function BiologicalAssets() {
   const newAssetLoss = Math.max(newAssetPurchasePrice - newAssetFairValue, 0);
 
   const handleDeleteAsset = async (id: string, tagId: string) => {
-    if (window.confirm(`Hapus ${tagId} dari listing? Jurnal HPP akan otomatis dibuat.`)) {
+    if (window.confirm(`Hapus ${tagId} dari listing? Jurnal HPP berdasarkan nilai wajar akan otomatis dibuat.`)) {
       await deleteBiologicalAsset(id);
     }
   };
@@ -377,6 +384,7 @@ export default function BiologicalAssets() {
                 <th className="px-4 py-3 text-left text-sm">Nilai Wajar</th>
                 <th className="px-4 py-3 text-left text-sm">Untung</th>
                 <th className="px-4 py-3 text-left text-sm">Rugi</th>
+                <th className="px-4 py-3 text-left text-sm">Dibuat Oleh</th>
                 <th className="px-4 py-3 text-left text-sm">Update</th>
                 <th className="px-4 py-3 text-left text-sm">Aksi</th>
               </tr>
@@ -471,6 +479,9 @@ export default function BiologicalAssets() {
                         {formatCurrency(asset.loss || 0)}
                       </span>
                     )}
+                  </td>
+                  <td className="px-4 py-3 text-xs" style={{ color: '#495057' }}>
+                    {adminLabel(asset.createdBy || asset.updatedBy)}
                   </td>
                   <td className="px-4 py-3 text-xs">
                     {editingId === asset.id ? (

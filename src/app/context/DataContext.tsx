@@ -21,6 +21,7 @@ export interface BiologicalAsset {
   profit?: number; // Untung
   loss?: number; // Rugi
   lastUpdated: string;
+  createdBy?: string; // Admin yang membuat
   updatedBy?: string; // Admin yang update
 }
 
@@ -948,7 +949,14 @@ export function DataProvider({ children }: { children: ReactNode }) {
   ) => {
     const nextEntries = journalEntries.map((journalEntry) =>
       journalEntry.id === id
-        ? { ...entry, id, updatedBy: currentUser?.username }
+        ? {
+            ...journalEntry,
+            ...entry,
+            id,
+            createdBy: journalEntry.createdBy,
+            createdAt: journalEntry.createdAt,
+            updatedBy: currentUser?.username,
+          }
         : journalEntry,
     );
     await commitState(biologicalAssets, nextEntries, fairValuePerKg);
@@ -978,6 +986,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       id: String(Date.now()),
       ageUpdatedAt: today,
       lastUpdated: today,
+      createdBy: currentUser?.username,
       updatedBy: currentUser?.username,
     };
 
@@ -1131,50 +1140,20 @@ export function DataProvider({ children }: { children: ReactNode }) {
     if (!asset) return;
 
     const today = getTodayDate();
-    const purchasePrice = Number(asset.purchasePrice || 0);
     const fairValue = Number(asset.fairValue || 0);
-    const valuationDifference = fairValue - purchasePrice;
     const baseId = Date.now();
     const deletionEntries: JournalEntry[] = [];
 
-    if (purchasePrice !== 0) {
+    if (fairValue !== 0) {
       deletionEntries.push({
         id: String(baseId + deletionEntries.length + 1),
         date: today,
-        description: `HPP ${asset.type} ${asset.tagId} berdasarkan harga beli`,
+        description: `HPP ${asset.type} ${asset.tagId} berdasarkan nilai wajar`,
         debitAccount: findAccount(chartOfAccounts, "5-3000", "Harga Pokok Penjualan"),
-        debitAmount: purchasePrice,
+        debitAmount: fairValue,
         creditAccount: findAccount(chartOfAccounts, "1-3000", "Aset Biologis"),
         creditAssetId: id,
-        creditAmount: purchasePrice,
-        createdBy: currentUser?.username,
-      });
-    }
-
-    if (valuationDifference > 0) {
-      deletionEntries.push({
-        id: String(baseId + deletionEntries.length + 1),
-        date: today,
-        description: `Pembalikan keuntungan nilai wajar ${asset.tagId}`,
-        debitAccount: findAccount(chartOfAccounts, "4-2000", "Keuntungan Nilai Wajar"),
-        debitAmount: valuationDifference,
-        creditAccount: findAccount(chartOfAccounts, "1-3000", "Aset Biologis"),
-        creditAssetId: id,
-        creditAmount: valuationDifference,
-        createdBy: currentUser?.username,
-      });
-    }
-
-    if (valuationDifference < 0) {
-      deletionEntries.push({
-        id: String(baseId + deletionEntries.length + 1),
-        date: today,
-        description: `Pembalikan kerugian nilai wajar ${asset.tagId}`,
-        debitAccount: findAccount(chartOfAccounts, "1-3000", "Aset Biologis"),
-        debitAssetId: id,
-        debitAmount: Math.abs(valuationDifference),
-        creditAccount: findAccount(chartOfAccounts, "5-4000", "Kerugian Nilai Wajar"),
-        creditAmount: Math.abs(valuationDifference),
+        creditAmount: fairValue,
         createdBy: currentUser?.username,
       });
     }

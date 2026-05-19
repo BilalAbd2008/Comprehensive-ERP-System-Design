@@ -16,6 +16,7 @@ export default function GeneralLedger() {
     addJournalDocument,
     getJournalDocuments,
     exportGeneralLedgerCSV,
+    admins,
   } = useData();
 
   const [showForm, setShowForm] = useState(false);
@@ -119,6 +120,8 @@ export default function GeneralLedger() {
         entry.description,
         entry.debitAccount,
         entry.creditAccount,
+        entry.createdBy,
+        entry.updatedBy,
         String(entry.debitAmount),
         String(entry.creditAmount),
       ]
@@ -128,6 +131,12 @@ export default function GeneralLedger() {
       return searchable.includes(query);
     });
   }, [journalEntries, searchQuery]);
+
+  const adminLabel = (username?: string) => {
+    if (!username) return '-';
+    const admin = admins.find((item) => item.username === username);
+    return admin ? `${admin.fullName} (@${admin.username})` : `@${username}`;
+  };
 
   // COA Management Functions
   const handleAddAccount = async () => {
@@ -467,6 +476,9 @@ export default function GeneralLedger() {
               <>
                 <span className="text-sm font-mono font-semibold">{account.code}</span>
                 <span className="text-sm flex-1">{account.name}</span>
+                <span className="text-xs" style={{ color: '#6C757D' }}>
+                  Dibuat oleh {adminLabel(account.createdBy)}
+                </span>
                 <span className="text-xs px-2 py-1 rounded" style={{ backgroundColor: '#E9ECEF', color: '#495057' }}>
                   {account.parentCode ? `Child dari ${account.parentCode}` : 'Parent'}
                 </span>
@@ -744,6 +756,7 @@ export default function GeneralLedger() {
                     <th className="px-3 py-2 text-right">Debit</th>
                     <th className="px-3 py-2 text-left">Akun Kredit</th>
                     <th className="px-3 py-2 text-right">Kredit</th>
+                    <th className="px-3 py-2 text-left">Dibuat Oleh</th>
                     <th className="px-3 py-2 text-center">Doc</th>
                     <th className="px-3 py-2 text-center">Aksi</th>
                   </tr>
@@ -811,6 +824,9 @@ export default function GeneralLedger() {
                               style={{ borderColor: '#DEE2E6' }}
                             />
                           </td>
+                          <td className="px-3 py-2 text-xs" style={{ color: '#495057' }}>
+                            {adminLabel(entry.createdBy || entry.updatedBy)}
+                          </td>
                           <td className="px-3 py-2 text-center">
                             {renderDocumentButtons(entry.id)}
                           </td>
@@ -833,6 +849,9 @@ export default function GeneralLedger() {
                           <td className="px-3 py-2 text-right">{formatCurrency(entry.debitAmount)}</td>
                           <td className="px-3 py-2 text-xs">{entry.creditAccount}</td>
                           <td className="px-3 py-2 text-right">{formatCurrency(entry.creditAmount)}</td>
+                          <td className="px-3 py-2 text-xs" style={{ color: '#495057' }}>
+                            {adminLabel(entry.createdBy || entry.updatedBy)}
+                          </td>
                           <td className="px-3 py-2 text-center">
                             {renderDocumentButtons(entry.id)}
                           </td>
@@ -929,6 +948,7 @@ export default function GeneralLedger() {
                 <h2 className="text-base" style={{ color: '#1B4332' }}>{previewDocument.fileName}</h2>
                 <p className="text-xs" style={{ color: '#6C757D' }}>
                   Dokumen {sideLabel(previewDocument.documentSide)}
+                  {' '} - Diunggah oleh {adminLabel(previewDocument.uploadedBy)}
                 </p>
               </div>
               <div className="flex gap-2">

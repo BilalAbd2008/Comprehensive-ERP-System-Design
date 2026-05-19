@@ -46,7 +46,7 @@ export default function Layout() {
   }
 
   const navigation = [
-    { name: "Dashboard Investor", href: "/", icon: LayoutDashboard },
+    { name: "Dashboard /*  */", href: "/", icon: LayoutDashboard },
     { name: "Aset Biologis", href: "/assets", icon: Sprout },
     { name: "Jurnal Umum / GL", href: "/journal", icon: BookOpen },
     { name: "Buku Besar", href: "/ledger", icon: BookOpen },
@@ -120,7 +120,7 @@ export default function Layout() {
             >
               <div className="flex items-center gap-3">
                 <FolderOpen size={18} />
-                <span>Kertas Kerja</span>
+                <span>BS &amp; PL</span>
               </div>
               <span
                 style={{

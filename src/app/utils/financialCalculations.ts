@@ -86,46 +86,43 @@ export function createBalanceReader(
 export function calculateProfitLossSummary(
   journalEntries: JournalEntry[],
   chartOfAccounts: ChartOfAccount[],
-  biologicalAssets?: BiologicalAsset[],
+  _biologicalAssets?: BiologicalAsset[],
 ) {
   const reader = createBalanceReader(journalEntries, chartOfAccounts);
-  const fairValueGainFromAssets =
-    biologicalAssets?.reduce((sum, asset) => sum + Number(asset.profit || 0), 0);
-  const fairValueLossFromAssets =
-    biologicalAssets?.reduce((sum, asset) => sum + Number(asset.loss || 0), 0);
 
   const pendapatanPenjualan = reader.creditBalance("4-1000");
-  const keuntunganNilaiWajar =
-    fairValueGainFromAssets ?? reader.creditBalance("4-2000");
+  const keuntunganNilaiWajar = reader.creditBalance("4-2000");
   const pendapatanLain = reader.creditBalance("4-3000");
   const hpp = reader.debitBalance("5-3000");
   const bebanGaji = reader.debitBalance("5-1000");
   const bebanPakan = reader.debitBalance("5-2000");
   const bebanPenyusutan = reader.debitBalance("5-6000");
-  const kerugianNilaiWajar =
-    fairValueLossFromAssets ?? reader.debitBalance("5-4000");
+  const kerugianNilaiWajar = reader.debitBalance("5-4000");
   const bebanLain = reader.debitBalance("5-5000");
 
-  const jumlahPendapatanUsaha =
-    pendapatanPenjualan + keuntunganNilaiWajar + pendapatanLain;
+  const pendapatanLainDenganNilaiWajar = pendapatanLain + keuntunganNilaiWajar;
+  const bebanLainDenganNilaiWajar = bebanLain + kerugianNilaiWajar;
+  const jumlahPendapatanUsaha = pendapatanPenjualan;
   const jumlahBebanPokokPendapatan = hpp;
   const labaKotor = pendapatanPenjualan - hpp;
   const jumlahBebanUsaha = bebanGaji + bebanPakan + bebanPenyusutan;
   const labaUsaha = labaKotor - jumlahBebanUsaha;
   const jumlahPendapatanBebanLainLain =
-    keuntunganNilaiWajar + pendapatanLain - kerugianNilaiWajar - bebanLain;
+    pendapatanLainDenganNilaiWajar - bebanLainDenganNilaiWajar;
   const labaBersih = labaUsaha + jumlahPendapatanBebanLainLain;
 
   return {
     pendapatanPenjualan,
     keuntunganNilaiWajar,
     pendapatanLain,
+    pendapatanLainDenganNilaiWajar,
     hpp,
     bebanGaji,
     bebanPakan,
     bebanPenyusutan,
     kerugianNilaiWajar,
     bebanLain,
+    bebanLainDenganNilaiWajar,
     jumlahPendapatanUsaha,
     jumlahBebanPokokPendapatan,
     labaKotor,

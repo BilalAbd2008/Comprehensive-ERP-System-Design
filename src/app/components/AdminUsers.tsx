@@ -24,6 +24,12 @@ export default function AdminUsers() {
 
   const isAdminUser = currentUser?.role === "admin";
 
+  const adminLabel = (username?: string) => {
+    if (!username) return "-";
+    const admin = admins.find((item) => item.username === username);
+    return admin ? `${admin.fullName} (@${admin.username})` : `@${username}`;
+  };
+
   const handleAddAdmin = async () => {
     if (!formData.username || !formData.fullName) {
       alert("Username dan nama lengkap wajib diisi");
@@ -381,6 +387,12 @@ export default function AdminUsers() {
                         >
                           @{admin.username}
                           {admin.email && ` • ${admin.email}`}
+                        </p>
+                        <p
+                          className="text-xs mt-1"
+                          style={{ color: "#6C757D" }}
+                        >
+                          Dibuat oleh {adminLabel(admin.createdBy)}
                         </p>
                       </div>
                     </div>

@@ -19,11 +19,13 @@ export default function WorkingProfitLoss() {
     pendapatanPenjualan,
     keuntunganNilaiWajar,
     pendapatanLain,
+    pendapatanLainDenganNilaiWajar,
     bebanGaji,
     bebanPakan,
     bebanPenyusutan,
     kerugianNilaiWajar,
     bebanLain,
+    bebanLainDenganNilaiWajar,
     jumlahPendapatanUsaha,
     jumlahBebanPokokPendapatan,
     labaKotor,
@@ -74,27 +76,6 @@ export default function WorkingProfitLoss() {
                 </div>
               </div>
 
-              <div className="py-2">
-                <div className="grid grid-cols-2 pl-4 py-1 rounded" style={{ backgroundColor: '#FFF3CD' }}>
-                  <span className="text-sm" style={{ color: '#856404' }}>{accountLabel('4-2000', 'Keuntungan Perubahan Nilai Wajar')} (PSAK 241)</span>
-                  <span className="text-sm text-right" style={{ color: '#856404' }}>
-                    {formatCurrency(keuntunganNilaiWajar)}
-                  </span>
-                </div>
-              </div>
-
-              <div className="py-2">
-                <div className="grid grid-cols-2 mb-1">
-                  <span className="text-sm" style={{ color: '#495057' }}>Pendapatan Lain-lain</span>
-                  <span></span>
-                </div>
-                <div className="grid grid-cols-2 pl-4 py-1">
-                  <span className="text-sm" style={{ color: '#6C757D' }}>{accountLabel('4-3000', 'Pendapatan Lain-lain')}</span>
-                  <span className="text-sm text-right" style={{ color: '#212529' }}>
-                    {formatCurrency(pendapatanLain)}
-                  </span>
-                </div>
-              </div>
             </div>
 
             <div className="grid grid-cols-2 py-3 px-3 mt-2" style={{ backgroundColor: '#FFB703' }}>
@@ -186,30 +167,50 @@ export default function WorkingProfitLoss() {
             </div>
 
             <div className="space-y-1 pl-6">
-              <div className="grid grid-cols-2 py-1 px-2 rounded" style={{ backgroundColor: '#FFF3CD' }}>
+              <div className="grid grid-cols-2 py-1">
+                <span className="text-sm" style={{ color: '#495057' }}>{accountLabel('4-3000', 'Pendapatan Lain-lain')}</span>
+                <span></span>
+              </div>
+              <div className="grid grid-cols-2 py-1 pl-4">
+                <span className="text-sm" style={{ color: '#6C757D' }}>{accountLabel('4-3000', 'Pendapatan Lain-lain')}</span>
+                <span className="text-sm text-right" style={{ color: '#212529' }}>
+                  {formatCurrency(pendapatanLain)}
+                </span>
+              </div>
+              <div className="grid grid-cols-2 py-1 pl-4 rounded" style={{ backgroundColor: '#FFF3CD' }}>
                 <span className="text-sm" style={{ color: '#856404' }}>{accountLabel('4-2000', 'Keuntungan Perubahan Nilai Wajar')} (PSAK 241)</span>
                 <span className="text-sm text-right" style={{ color: '#856404' }}>
                   {formatCurrency(keuntunganNilaiWajar)}
                 </span>
               </div>
+              <div className="grid grid-cols-2 py-1">
+                <span className="text-sm" style={{ color: '#495057' }}>{accountLabel('5-5000', 'Beban Lain-lain')}</span>
+                <span></span>
+              </div>
+              <div className="grid grid-cols-2 py-1 pl-4">
+                <span className="text-sm" style={{ color: '#6C757D' }}>{accountLabel('5-5000', 'Beban Lain-lain')}</span>
+                <span className="text-sm text-right" style={{ color: '#DC3545' }}>
+                  {bebanLain > 0 ? `(${formatCurrency(bebanLain)})` : '-'}
+                </span>
+              </div>
               {kerugianNilaiWajar > 0 && (
-                <div className="grid grid-cols-2 py-1">
+                <div className="grid grid-cols-2 py-1 pl-4">
                   <span className="text-sm" style={{ color: '#6C757D' }}>{accountLabel('5-4000', 'Kerugian Nilai Wajar')}</span>
                   <span className="text-sm text-right" style={{ color: '#DC3545' }}>
                     ({formatCurrency(kerugianNilaiWajar)})
                   </span>
                 </div>
               )}
-              <div className="grid grid-cols-2 py-1">
-                <span className="text-sm" style={{ color: '#6C757D' }}>{accountLabel('4-3000', 'Pendapatan Lain-lain')}</span>
+              <div className="grid grid-cols-2 py-1 border-t" style={{ borderColor: '#DEE2E6' }}>
+                <span className="text-sm" style={{ color: '#6C757D' }}>Subtotal Pendapatan Lain-lain</span>
                 <span className="text-sm text-right" style={{ color: '#212529' }}>
-                  {formatCurrency(pendapatanLain)}
+                  {formatCurrency(pendapatanLainDenganNilaiWajar)}
                 </span>
               </div>
               <div className="grid grid-cols-2 py-1">
-                <span className="text-sm" style={{ color: '#6C757D' }}>{accountLabel('5-5000', 'Beban Lain-lain')}</span>
+                <span className="text-sm" style={{ color: '#6C757D' }}>Subtotal Beban Lain-lain</span>
                 <span className="text-sm text-right" style={{ color: '#DC3545' }}>
-                  {bebanLain > 0 ? `(${formatCurrency(bebanLain)})` : '-'}
+                  {bebanLainDenganNilaiWajar > 0 ? `(${formatCurrency(bebanLainDenganNilaiWajar)})` : '-'}
                 </span>
               </div>
             </div>

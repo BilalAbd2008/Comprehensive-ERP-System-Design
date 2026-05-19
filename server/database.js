@@ -361,6 +361,18 @@ async function seedDefaults(
     defaultJournalDocuments.length > 0
   ) {
     for (const document of defaultJournalDocuments) {
+      const [journalEntryRows] = await pool.query(
+        "SELECT COUNT(*) AS total FROM journal_entries WHERE id = ?",
+        [document.journalEntryId],
+      );
+
+      if (journalEntryRows[0].total === 0) {
+        console.warn(
+          `Lewati seed dokumen ${document.id}: journal entry ${document.journalEntryId} tidak ditemukan.`,
+        );
+        continue;
+      }
+
       await pool.query(
         "INSERT INTO journal_documents (id, journal_entry_id, document_side, file_name, file_data, file_type, uploaded_by, uploaded_at) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())",
         [

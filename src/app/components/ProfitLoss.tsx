@@ -45,8 +45,10 @@ export default function ProfitLoss() {
       labaOperasional: summary.labaUsaha,
       keuntunganNilaiWajar: summary.keuntunganNilaiWajar,
       pendapatanLain: summary.pendapatanLain,
+      pendapatanLainDenganNilaiWajar: summary.pendapatanLainDenganNilaiWajar,
       kerugianNilaiWajar: summary.kerugianNilaiWajar,
       bebanLain: summary.bebanLain,
+      bebanLainDenganNilaiWajar: summary.bebanLainDenganNilaiWajar,
       totalOIOE: summary.jumlahPendapatanBebanLainLain,
       labaBersih: summary.labaBersih,
     };
@@ -260,42 +262,50 @@ export default function ProfitLoss() {
                   Pendapatan & Beban Lain-lain (OIOE):
                 </span>
               </div>
-              <div
-                className="flex justify-between items-center py-2 px-3 rounded"
-                style={{ backgroundColor: "#FFF3CD" }}
-              >
-                <span className="text-sm pl-2" style={{ color: "#856404" }}>
-                  {accountLabel("4-2000", "Keuntungan Nilai Wajar")} (PSAK 241)
-                </span>
-                <span className="text-sm" style={{ color: "#856404" }}>
-                  {formatCurrency(pl.keuntunganNilaiWajar)}
+              <div className="py-2 pl-4">
+                <span className="text-sm" style={{ color: "#495057" }}>
+                  {accountLabel("4-3000", "Pendapatan Lain-lain")}
                 </span>
               </div>
-              <div className="flex justify-between items-center py-2 pl-4">
-                <span className="text-sm" style={{ color: "#495057" }}>
+              <div className="flex justify-between items-center py-1 pl-8">
+                <span className="text-sm" style={{ color: "#6C757D" }}>
                   {accountLabel("4-3000", "Pendapatan Lain-lain")}
                 </span>
                 <span className="text-sm" style={{ color: "#495057" }}>
                   {formatCurrency(pl.pendapatanLain)}
                 </span>
               </div>
+              <div
+                className="flex justify-between items-center py-1 pl-8 rounded"
+                style={{ backgroundColor: "#FFF3CD" }}
+              >
+                <span className="text-sm" style={{ color: "#856404" }}>
+                  {accountLabel("4-2000", "Keuntungan Nilai Wajar")} (PSAK 241)
+                </span>
+                <span className="text-sm" style={{ color: "#856404" }}>
+                  {formatCurrency(pl.keuntunganNilaiWajar)}
+                </span>
+              </div>
+              <div className="py-2 pl-4">
+                <span className="text-sm" style={{ color: "#495057" }}>
+                  {accountLabel("5-5000", "Beban Lain-lain")}
+                </span>
+              </div>
+              <div className="flex justify-between items-center py-1 pl-8">
+                <span className="text-sm" style={{ color: "#6C757D" }}>
+                  {accountLabel("5-5000", "Beban Lain-lain")}
+                </span>
+                <span className="text-sm" style={{ color: "#495057" }}>
+                  {pl.bebanLain > 0 ? `(${formatCurrency(pl.bebanLain)})` : "-"}
+                </span>
+              </div>
               {pl.kerugianNilaiWajar > 0 && (
-                <div className="flex justify-between items-center py-2 pl-4">
+                <div className="flex justify-between items-center py-1 pl-8">
                   <span className="text-sm" style={{ color: "#495057" }}>
                     {accountLabel("5-4000", "Kerugian Nilai Wajar")}
                   </span>
                   <span className="text-sm" style={{ color: "#495057" }}>
                     ({formatCurrency(pl.kerugianNilaiWajar)})
-                  </span>
-                </div>
-              )}
-              {pl.bebanLain > 0 && (
-                <div className="flex justify-between items-center py-2 pl-4">
-                  <span className="text-sm" style={{ color: "#495057" }}>
-                    {accountLabel("5-5000", "Beban Lain-lain")}
-                  </span>
-                  <span className="text-sm" style={{ color: "#495057" }}>
-                    ({formatCurrency(pl.bebanLain)})
                   </span>
                 </div>
               )}

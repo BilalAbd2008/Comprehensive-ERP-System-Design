@@ -461,10 +461,17 @@ async function replaceState(
       );
     }
 
-    if (journalDocuments.length > 0) {
+    const validJournalIds = new Set(
+      journalEntries.map((entry) => String(entry.id)),
+    );
+    const validJournalDocuments = journalDocuments.filter((document) =>
+      validJournalIds.has(String(document.journalEntryId)),
+    );
+
+    if (validJournalDocuments.length > 0) {
       await connection.query(
         "INSERT INTO journal_documents (id, journal_entry_id, document_side, file_name, file_data, file_type, uploaded_by) VALUES ?",
-        [toJournalDocumentValues(journalDocuments)],
+        [toJournalDocumentValues(validJournalDocuments)],
       );
     }
 
@@ -775,55 +782,23 @@ app.delete("/api/assets/:id", async (req, res, next) => {
 
     const asset = normalizeAsset(rows[0]);
     const today = new Date().toISOString().split("T")[0];
-    const purchasePrice = Number(asset.purchasePrice || 0);
     const fairValue = Number(asset.fairValue || 0);
-    const valuationDifference = fairValue - purchasePrice;
 
     await withTransaction(async (connection) => {
       const baseId = Date.now();
       const deletionEntries = [];
 
-      if (purchasePrice !== 0) {
+      if (fairValue !== 0) {
         deletionEntries.push([
           String(baseId + deletionEntries.length + 1),
           today,
-          `HPP ${asset.type} ${asset.tagId} berdasarkan harga beli`,
+          `HPP ${asset.type} ${asset.tagId} berdasarkan nilai wajar`,
           "5-3000 Harga Pokok Penjualan",
           null,
-          purchasePrice,
+          fairValue,
           "1-3000 Aset Biologis",
           assetId,
-          purchasePrice,
-          deletedBy,
-        ]);
-      }
-
-      if (valuationDifference > 0) {
-        deletionEntries.push([
-          String(baseId + deletionEntries.length + 1),
-          today,
-          `Pembalikan keuntungan nilai wajar ${asset.tagId}`,
-          "4-2000 Keuntungan Nilai Wajar",
-          null,
-          valuationDifference,
-          "1-3000 Aset Biologis",
-          assetId,
-          valuationDifference,
-          deletedBy,
-        ]);
-      }
-
-      if (valuationDifference < 0) {
-        deletionEntries.push([
-          String(baseId + deletionEntries.length + 1),
-          today,
-          `Pembalikan kerugian nilai wajar ${asset.tagId}`,
-          "1-3000 Aset Biologis",
-          assetId,
-          Math.abs(valuationDifference),
-          "5-4000 Kerugian Nilai Wajar",
-          null,
-          Math.abs(valuationDifference),
+          fairValue,
           deletedBy,
         ]);
       }
@@ -1090,14 +1065,15 @@ app.post("/api/journal-documents", async (req, res, next) => {
     const fileName = String(req.body?.fileName || "").trim();
     const fileData = req.body?.fileData || "";
     const fileType = req.body?.fileType || "";
+    const uploadedBy = req.body?.uploadedBy || "system";
 
     if (!journalEntryId || !fileName || !fileData) {
       return res.status(400).json({ message: "Semua field wajib diisi" });
     }
 
     await getPool().query(
-      "INSERT INTO journal_documents (id, journal_entry_id, document_side, file_name, file_data, file_type, uploaded_at) VALUES (?, ?, ?, ?, ?, ?, NOW())",
-      [id, journalEntryId, documentSide, fileName, fileData, fileType],
+      "INSERT INTO journal_documents (id, journal_entry_id, document_side, file_name, file_data, file_type, uploaded_by, uploaded_at) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())",
+      [id, journalEntryId, documentSide, fileName, fileData, fileType, uploadedBy],
     );
 
     const [newRow] = await getPool().query(
