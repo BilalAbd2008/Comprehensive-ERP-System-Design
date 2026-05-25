@@ -34,6 +34,7 @@ export default function GeneralLedger() {
     category: 'asset' as const,
   });
   const [editAccount, setEditAccount] = useState({
+    code: '',
     name: '',
     parentCode: '',
     category: 'asset' as const,
@@ -219,6 +220,7 @@ export default function GeneralLedger() {
     if (!account) return;
     setEditingAccountCode(accountCode);
     setEditAccount({
+      code: account.code,
       name: account.name,
       parentCode: account.parentCode || '',
       category: account.category,
@@ -228,8 +230,26 @@ export default function GeneralLedger() {
 
   const saveEditAccount = async () => {
     if (!editingAccountCode) return;
+    const nextCode = editAccount.code.trim();
+    const nextName = editAccount.name.trim();
+    if (!nextCode || !nextName) {
+      alert('Kode akun dan nama akun wajib diisi');
+      return;
+    }
+    const duplicate = chartOfAccounts.some(
+      (account) => account.code === nextCode && account.code !== editingAccountCode,
+    );
+    if (duplicate) {
+      alert('Kode akun sudah digunakan akun lain');
+      return;
+    }
+    if (editAccount.parentCode === editingAccountCode || editAccount.parentCode === nextCode) {
+      alert('Akun tidak bisa menjadi parent untuk dirinya sendiri');
+      return;
+    }
     await updateChartOfAccount(editingAccountCode, {
-      name: editAccount.name.trim(),
+      code: nextCode,
+      name: nextName,
       parentCode: editAccount.parentCode || null,
       category: editAccount.category,
       isActive: editAccount.isActive,
@@ -349,6 +369,12 @@ export default function GeneralLedger() {
     setEditingJournalId(null);
   };
 
+  const handleDeleteJournal = async (entryId: string, description: string) => {
+    const label = description.trim() || 'jurnal ini';
+    if (!window.confirm(`Hapus transaksi "${label}" dari jurnal umum?`)) return;
+    await deleteJournalEntry(entryId);
+  };
+
   const handleExportCSV = () => {
     const csv = exportGeneralLedgerCSV();
     const blob = new Blob([csv], { type: 'text/csv' });
@@ -424,7 +450,13 @@ export default function GeneralLedger() {
             {!hasChildren && <div className="w-6" />}
             {editingAccountCode === account.code ? (
               <>
-                <span className="text-sm font-mono font-semibold w-24">{account.code}</span>
+                <input
+                  type="text"
+                  value={editAccount.code}
+                  onChange={(e) => setEditAccount({ ...editAccount, code: e.target.value })}
+                  className="w-28 px-2 py-1 border rounded text-sm font-mono"
+                  style={{ borderColor: '#DEE2E6' }}
+                />
                 <input
                   type="text"
                   value={editAccount.name}
@@ -856,13 +888,26 @@ export default function GeneralLedger() {
                             {renderDocumentButtons(entry.id)}
                           </td>
                           <td className="px-3 py-2 text-center">
-                            <button
-                              onClick={() => startEditJournal(entry.id)}
-                              className="p-1 rounded"
-                              style={{ backgroundColor: '#FFB703', color: '#212529' }}
-                            >
-                              <Pencil size={12} />
-                            </button>
+                            <div className="flex gap-1 justify-center">
+                              <button
+                                type="button"
+                                onClick={() => startEditJournal(entry.id)}
+                                className="p-1 rounded"
+                                style={{ backgroundColor: '#FFB703', color: '#212529' }}
+                                title="Edit jurnal"
+                              >
+                                <Pencil size={12} />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteJournal(entry.id, entry.description)}
+                                className="p-1 rounded"
+                                style={{ backgroundColor: '#FFE5E5', color: '#DC3545' }}
+                                title="Hapus jurnal"
+                              >
+                                <Trash2 size={12} />
+                              </button>
+                            </div>
                           </td>
                         </>
                       )}

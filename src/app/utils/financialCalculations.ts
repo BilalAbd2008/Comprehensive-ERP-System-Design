@@ -69,6 +69,8 @@ export function createBalanceReader(
 
   const debitBalance = (code: string) => balanceIncludingChildren(code);
   const creditBalance = (code: string) => Math.abs(Math.min(balanceIncludingChildren(code), 0));
+  const debitDirectBalance = (code: string) => Math.max(balanceByCode(code), 0);
+  const creditDirectBalance = (code: string) => Math.abs(Math.min(balanceByCode(code), 0));
 
   return {
     balances,
@@ -80,6 +82,8 @@ export function createBalanceReader(
     balanceIncludingChildren,
     debitBalance,
     creditBalance,
+    debitDirectBalance,
+    creditDirectBalance,
   };
 }
 
@@ -89,6 +93,32 @@ export function calculateProfitLossSummary(
   _biologicalAssets?: BiologicalAsset[],
 ) {
   const reader = createBalanceReader(journalEntries, chartOfAccounts);
+  const revenueAccounts = chartOfAccounts
+    .filter((account) => account.category === "revenue")
+    .sort((a, b) => a.code.localeCompare(b.code));
+  const expenseAccounts = chartOfAccounts
+    .filter((account) => account.category === "expense")
+    .sort((a, b) => a.code.localeCompare(b.code));
+  const isSelfOrDescendant = (candidateCode: string, parentCode: string) => {
+    if (candidateCode === parentCode) return true;
+    let current = reader.byCode.get(candidateCode);
+    while (current?.parentCode) {
+      if (current.parentCode === parentCode) return true;
+      current = reader.byCode.get(current.parentCode);
+    }
+    return false;
+  };
+
+  const toRevenueRow = (account: ChartOfAccount) => ({
+    code: account.code,
+    name: account.name,
+    amount: reader.creditDirectBalance(account.code),
+  });
+  const toExpenseRow = (account: ChartOfAccount) => ({
+    code: account.code,
+    name: account.name,
+    amount: reader.debitDirectBalance(account.code),
+  });
 
   const pendapatanPenjualan = reader.creditBalance("4-1000");
   const keuntunganNilaiWajar = reader.creditBalance("4-2000");
@@ -99,13 +129,28 @@ export function calculateProfitLossSummary(
   const bebanPenyusutan = reader.debitBalance("5-6000");
   const kerugianNilaiWajar = reader.debitBalance("5-4000");
   const bebanLain = reader.debitBalance("5-5000");
+  const operatingRevenueRows = revenueAccounts
+    .filter((account) => !isSelfOrDescendant(account.code, "4-2000") && !isSelfOrDescendant(account.code, "4-3000"))
+    .map(toRevenueRow);
+  const otherRevenueRows = revenueAccounts
+    .filter((account) => isSelfOrDescendant(account.code, "4-2000") || isSelfOrDescendant(account.code, "4-3000"))
+    .map(toRevenueRow);
+  const costOfRevenueRows = expenseAccounts
+    .filter((account) => isSelfOrDescendant(account.code, "5-3000"))
+    .map(toExpenseRow);
+  const operatingExpenseRows = expenseAccounts
+    .filter((account) => !isSelfOrDescendant(account.code, "5-3000") && !isSelfOrDescendant(account.code, "5-4000") && !isSelfOrDescendant(account.code, "5-5000"))
+    .map(toExpenseRow);
+  const otherExpenseRows = expenseAccounts
+    .filter((account) => isSelfOrDescendant(account.code, "5-4000") || isSelfOrDescendant(account.code, "5-5000"))
+    .map(toExpenseRow);
 
-  const pendapatanLainDenganNilaiWajar = pendapatanLain + keuntunganNilaiWajar;
-  const bebanLainDenganNilaiWajar = bebanLain + kerugianNilaiWajar;
-  const jumlahPendapatanUsaha = pendapatanPenjualan;
-  const jumlahBebanPokokPendapatan = hpp;
-  const labaKotor = pendapatanPenjualan - hpp;
-  const jumlahBebanUsaha = bebanGaji + bebanPakan + bebanPenyusutan;
+  const jumlahPendapatanUsaha = operatingRevenueRows.reduce((sum, row) => sum + row.amount, 0);
+  const jumlahBebanPokokPendapatan = costOfRevenueRows.reduce((sum, row) => sum + row.amount, 0);
+  const pendapatanLainDenganNilaiWajar = otherRevenueRows.reduce((sum, row) => sum + row.amount, 0);
+  const bebanLainDenganNilaiWajar = otherExpenseRows.reduce((sum, row) => sum + row.amount, 0);
+  const labaKotor = jumlahPendapatanUsaha - jumlahBebanPokokPendapatan;
+  const jumlahBebanUsaha = operatingExpenseRows.reduce((sum, row) => sum + row.amount, 0);
   const labaUsaha = labaKotor - jumlahBebanUsaha;
   const jumlahPendapatanBebanLainLain =
     pendapatanLainDenganNilaiWajar - bebanLainDenganNilaiWajar;
@@ -123,6 +168,11 @@ export function calculateProfitLossSummary(
     kerugianNilaiWajar,
     bebanLain,
     bebanLainDenganNilaiWajar,
+    operatingRevenueRows,
+    costOfRevenueRows,
+    operatingExpenseRows,
+    otherRevenueRows,
+    otherExpenseRows,
     jumlahPendapatanUsaha,
     jumlahBebanPokokPendapatan,
     labaKotor,

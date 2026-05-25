@@ -19,6 +19,7 @@ export default function WorkingBalanceSheetLiability() {
     childrenOf,
     topAccountsByCategory,
     creditBalance,
+    balanceIncludingChildren,
   } = createBalanceReader(journalEntries, chartOfAccounts);
   const { labaBersih: labaTahunBerjalan } = calculateProfitLossSummary(
     journalEntries,
@@ -33,13 +34,13 @@ export default function WorkingBalanceSheetLiability() {
 
   // LIABILITAS
   const totalLiabilitas = liabilityAccounts.reduce(
-    (sum, account) => sum + creditBalance(account.code),
+    (sum, account) => sum + Math.abs(Math.min(balanceIncludingChildren(account.code), 0)),
     0,
   );
 
   // EKUITAS
   const modalDisetor = equityCapitalAccounts.reduce(
-    (sum, account) => sum + creditBalance(account.code),
+    (sum, account) => sum + Math.abs(Math.min(balanceIncludingChildren(account.code), 0)),
     0,
   );
   const labaDitahan = labaTahunBerjalan;
@@ -83,7 +84,7 @@ export default function WorkingBalanceSheetLiability() {
                 <div className="pl-4">
                   {liabilityAccounts.length > 0 ? (
                     liabilityAccounts.map((account) => {
-                      const parentAmount = creditBalance(account.code);
+                      const parentAmount = Math.abs(Math.min(balanceIncludingChildren(account.code), 0));
                       const children = childrenOf(account.code);
                       return (
                         <div key={account.code} className="mb-2">
@@ -152,7 +153,7 @@ export default function WorkingBalanceSheetLiability() {
                 <div className="pl-4">
                   {equityCapitalAccounts.length > 0 ? (
                     equityCapitalAccounts.map((account) => {
-                      const parentAmount = creditBalance(account.code);
+                      const parentAmount = Math.abs(Math.min(balanceIncludingChildren(account.code), 0));
                       const children = childrenOf(account.code);
                       return (
                         <div key={account.code} className="mb-2">

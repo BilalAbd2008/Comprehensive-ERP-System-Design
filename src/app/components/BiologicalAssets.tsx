@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useData } from '../context/DataContext';
 import { Edit2, Check, X, QrCode, Scan, Plus, Trash2 } from 'lucide-react';
 import QRCodeDisplay from './QRCodeDisplay';
@@ -19,7 +19,22 @@ export default function BiologicalAssets() {
   } = useData();
   
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [columnSearch, setColumnSearch] = useState({
+    tagId: '',
+    type: '',
+    age: '',
+    weight: '',
+    purchasePrice: '',
+    fairValue: '',
+    profit: '',
+    loss: '',
+    admin: '',
+    updated: '',
+  });
   const [editData, setEditData] = useState({
+    tagId: '',
+    type: '',
+    age: 0,
     weight: 0,
     purchasePrice: 0,
     lastUpdated: '',
@@ -56,6 +71,9 @@ export default function BiologicalAssets() {
   const handleEdit = (id: string, asset: any) => {
     setEditingId(id);
     setEditData({
+      tagId: asset.tagId,
+      type: asset.type,
+      age: asset.age,
       weight: asset.weight,
       purchasePrice: asset.purchasePrice || 0,
       lastUpdated: asset.lastUpdated,
@@ -72,17 +90,90 @@ export default function BiologicalAssets() {
     return admin ? `${admin.fullName} (@${admin.username})` : `@${username}`;
   };
 
+  const filteredAssets = useMemo(() => {
+    const filters = Object.fromEntries(
+      Object.entries(columnSearch).map(([key, value]) => [key, value.trim().toLowerCase()]),
+    );
+
+    return biologicalAssets.filter((asset) => {
+      const values = {
+        tagId: asset.tagId,
+        type: asset.type,
+        age: String(asset.age),
+        weight: String(asset.weight),
+        purchasePrice: String(asset.purchasePrice || 0),
+        fairValue: String(asset.fairValue || 0),
+        profit: String(asset.profit || 0),
+        loss: String(asset.loss || 0),
+        admin: adminLabel(asset.createdBy || asset.updatedBy),
+        updated: asset.lastUpdated,
+      };
+
+      return Object.entries(filters).every(([key, filter]) =>
+        !filter || String(values[key as keyof typeof values]).toLowerCase().includes(filter),
+      );
+    });
+  }, [biologicalAssets, columnSearch, admins]);
+
+  const updateColumnSearch = (key: keyof typeof columnSearch, value: string) => {
+    setColumnSearch((current) => ({ ...current, [key]: value }));
+  };
+
+  const renderColumnSearch = (
+    key: keyof typeof columnSearch,
+    placeholder: string,
+    width = 'w-24',
+  ) => (
+    <input
+      type="text"
+      value={columnSearch[key]}
+      onChange={(e) => updateColumnSearch(key, e.target.value)}
+      placeholder={placeholder}
+      className={`${width} px-2 py-1 border rounded text-xs text-gray-900`}
+      style={{ borderColor: '#DEE2E6' }}
+    />
+  );
+
   const handleSave = async (id: string) => {
     const asset = biologicalAssets.find(a => a.id === id);
     if (!asset) return;
 
-    const newFairValue = editData.weight * getPricePerKgForType(asset.type);
+    const nextTagId = editData.tagId.trim();
+    if (!nextTagId) {
+      alert('ID Tag wajib diisi');
+      return;
+    }
+
+    const duplicateTag = biologicalAssets.some(
+      (item) => item.id !== id && item.tagId.trim().toLowerCase() === nextTagId.toLowerCase(),
+    );
+    if (duplicateTag) {
+      alert('ID Tag sudah digunakan aset lain');
+      return;
+    }
+
+    if (!editData.type) {
+      alert('Jenis hewan wajib dipilih');
+      return;
+    }
+
+    if (!Number.isFinite(editData.age) || editData.age < 0) {
+      alert('Umur harus 0 atau lebih');
+      return;
+    }
+
+    const updateDate = editData.manualDate ? editData.lastUpdated : new Date().toISOString().split('T')[0];
+    const newFairValue = editData.weight * getPricePerKgForType(editData.type);
 
     await updateBiologicalAsset(id, {
+      tagId: nextTagId,
+      type: editData.type,
+      age: editData.age,
       weight: editData.weight,
       fairValue: newFairValue,
       purchasePrice: editData.purchasePrice,
-      lastUpdated: editData.manualDate ? editData.lastUpdated : new Date().toISOString().split('T')[0],
+      ageUpdatedAt: editData.age !== asset.age ? updateDate : asset.ageUpdatedAt,
+      lastUpdated: updateDate,
     });
 
     setEditingId(null);
@@ -388,9 +479,23 @@ export default function BiologicalAssets() {
                 <th className="px-4 py-3 text-left text-sm">Update</th>
                 <th className="px-4 py-3 text-left text-sm">Aksi</th>
               </tr>
+              <tr style={{ backgroundColor: '#F8F9FA' }}>
+                <th className="px-4 py-2"></th>
+                <th className="px-4 py-2">{renderColumnSearch('tagId', 'Cari tag', 'w-44')}</th>
+                <th className="px-4 py-2">{renderColumnSearch('type', 'Jenis')}</th>
+                <th className="px-4 py-2">{renderColumnSearch('age', 'Umur', 'w-20')}</th>
+                <th className="px-4 py-2">{renderColumnSearch('weight', 'Berat', 'w-20')}</th>
+                <th className="px-4 py-2">{renderColumnSearch('purchasePrice', 'Beli')}</th>
+                <th className="px-4 py-2">{renderColumnSearch('fairValue', 'Wajar')}</th>
+                <th className="px-4 py-2">{renderColumnSearch('profit', 'Untung')}</th>
+                <th className="px-4 py-2">{renderColumnSearch('loss', 'Rugi')}</th>
+                <th className="px-4 py-2">{renderColumnSearch('admin', 'Admin', 'w-32')}</th>
+                <th className="px-4 py-2">{renderColumnSearch('updated', 'Tanggal', 'w-28')}</th>
+                <th className="px-4 py-2"></th>
+              </tr>
             </thead>
             <tbody>
-              {biologicalAssets.map((asset) => (
+              {filteredAssets.map((asset) => (
                 <tr
                   key={asset.id}
                   className="border-b transition-colors hover:bg-gray-50"
@@ -409,19 +514,57 @@ export default function BiologicalAssets() {
                       </div>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-sm">{asset.tagId}</td>
-                  <td className="px-4 py-3">
-                    <span
-                      className="text-xs px-2 py-1 rounded"
-                      style={{
-                        backgroundColor: asset.type === 'Domba' ? '#E7F5E9' : '#FFF3CD',
-                        color: asset.type === 'Domba' ? '#1B4332' : '#856404',
-                      }}
-                    >
-                      {asset.type}
-                    </span>
+                  <td className="px-4 py-3 text-sm">
+                    {editingId === asset.id ? (
+                      <input
+                        type="text"
+                        value={editData.tagId}
+                        onChange={(e) => setEditData({ ...editData, tagId: e.target.value })}
+                        className="w-52 px-2 py-1 border rounded text-sm"
+                        style={{ borderColor: '#FFB703' }}
+                      />
+                    ) : (
+                      asset.tagId
+                    )}
                   </td>
-                  <td className="px-4 py-3 text-sm">{asset.age}</td>
+                  <td className="px-4 py-3">
+                    {editingId === asset.id ? (
+                      <select
+                        value={editData.type}
+                        onChange={(e) => setEditData({ ...editData, type: e.target.value })}
+                        className="w-28 px-2 py-1 border rounded text-sm"
+                        style={{ borderColor: '#FFB703' }}
+                      >
+                        {animalTypes.map((type) => (
+                          <option key={type} value={type}>{type}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <span
+                        className="text-xs px-2 py-1 rounded"
+                        style={{
+                          backgroundColor: asset.type === 'Domba' ? '#E7F5E9' : '#FFF3CD',
+                          color: asset.type === 'Domba' ? '#1B4332' : '#856404',
+                        }}
+                      >
+                        {asset.type}
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-sm">
+                    {editingId === asset.id ? (
+                      <input
+                        type="number"
+                        value={editData.age}
+                        onChange={(e) => setEditData({ ...editData, age: Number(e.target.value) })}
+                        className="w-20 px-2 py-1 border rounded text-sm"
+                        style={{ borderColor: '#FFB703' }}
+                        min={0}
+                      />
+                    ) : (
+                      asset.age
+                    )}
+                  </td>
                   <td className="px-4 py-3 text-sm">
                     {editingId === asset.id ? (
                       <input
@@ -450,13 +593,13 @@ export default function BiologicalAssets() {
                     )}
                   </td>
                   <td className="px-4 py-3 text-sm font-semibold">
-                    {formatCurrency(editingId === asset.id ? editData.weight * getPricePerKgForType(asset.type) : asset.fairValue)}
+                    {formatCurrency(editingId === asset.id ? editData.weight * getPricePerKgForType(editData.type) : asset.fairValue)}
                   </td>
                   <td className="px-4 py-3 text-sm">
                     {editingId === asset.id ? (
                       <span style={{ color: '#28A745' }}>
                         {formatCurrency(Math.max(
-                          editData.weight * getPricePerKgForType(asset.type) - editData.purchasePrice,
+                          editData.weight * getPricePerKgForType(editData.type) - editData.purchasePrice,
                           0,
                         ))}
                       </span>
@@ -470,7 +613,7 @@ export default function BiologicalAssets() {
                     {editingId === asset.id ? (
                       <span style={{ color: '#DC3545' }}>
                         {formatCurrency(Math.max(
-                          editData.purchasePrice - editData.weight * getPricePerKgForType(asset.type),
+                          editData.purchasePrice - editData.weight * getPricePerKgForType(editData.type),
                           0,
                         ))}
                       </span>
@@ -551,17 +694,17 @@ export default function BiologicalAssets() {
             <tfoot>
               <tr style={{ backgroundColor: '#F8F9FA' }}>
                 <td colSpan={3} className="px-4 py-3 text-sm font-semibold" style={{ color: '#1B4332' }}>
-                  Total: {biologicalAssets.length} Ekor
+                  Total: {filteredAssets.length} Ekor
                 </td>
                 <td colSpan={3}></td>
                 <td className="px-4 py-3 text-sm font-semibold" style={{ color: '#1B4332' }}>
-                  {formatCurrency(biologicalAssets.reduce((sum, a) => sum + a.fairValue, 0))}
+                  {formatCurrency(filteredAssets.reduce((sum, a) => sum + a.fairValue, 0))}
                 </td>
                 <td className="px-4 py-3 text-sm font-semibold" style={{ color: '#28A745' }}>
-                  {formatCurrency(biologicalAssets.reduce((sum, a) => sum + (a.profit || 0), 0))}
+                  {formatCurrency(filteredAssets.reduce((sum, a) => sum + (a.profit || 0), 0))}
                 </td>
                 <td className="px-4 py-3 text-sm font-semibold" style={{ color: '#DC3545' }}>
-                  {formatCurrency(biologicalAssets.reduce((sum, a) => sum + (a.loss || 0), 0))}
+                  {formatCurrency(filteredAssets.reduce((sum, a) => sum + (a.loss || 0), 0))}
                 </td>
                 <td colSpan={2}></td>
               </tr>

@@ -604,8 +604,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
         "Gagal menyimpan data ke backend, data hanya tersimpan di localStorage",
         error,
       );
+      const detail =
+        error instanceof Error && error.message
+          ? `\n\nDetail: ${error.message}`
+          : "";
       alert(
-        "Data belum masuk ke database MySQL. Pastikan backend dan MySQL berjalan, lalu simpan ulang.",
+        `Data belum masuk ke database MySQL. Pastikan backend dan MySQL berjalan, lalu simpan ulang.${detail}`,
       );
       throw error;
     }
@@ -964,8 +968,14 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   const deleteJournalEntry = async (id: string) => {
     const nextEntries = journalEntries.filter((e) => e.id !== id);
-    setJournalDocuments((docs) => docs.filter((d) => d.journalEntryId !== id));
-    await commitState(biologicalAssets, nextEntries, fairValuePerKg);
+    const nextDocuments = journalDocuments.filter((d) => d.journalEntryId !== id);
+    setJournalDocuments(nextDocuments);
+    await commitState(
+      biologicalAssets,
+      nextEntries,
+      fairValuePerKg,
+      nextDocuments,
+    );
   };
 
   const addBiologicalAsset = async (
@@ -1386,11 +1396,33 @@ export function DataProvider({ children }: { children: ReactNode }) {
     code: string,
     account: Partial<ChartOfAccount>,
   ) => {
+    const nextCode = String(account.code || code).trim();
+    const nextName = String(account.name || "").trim();
+    const previous = chartOfAccounts.find((a) => a.code === code);
+    const renameJournalAccount = (accountText: string) => {
+      if (!previous || nextCode === code || !accountText.startsWith(`${code} `)) {
+        return accountText;
+      }
+      return `${nextCode} ${nextName || previous.name}`;
+    };
     const updatedCOA = chartOfAccounts.map((a) =>
-      a.code === code ? { ...a, ...account } : a,
+      a.code === code
+        ? { ...a, ...account, code: nextCode }
+        : {
+            ...a,
+            parentCode:
+              nextCode !== code && a.parentCode === code ? nextCode : a.parentCode,
+          },
     );
+    const updatedEntries = journalEntries.map((entry) => ({
+      ...entry,
+      debitAccount: renameJournalAccount(entry.debitAccount),
+      creditAccount: renameJournalAccount(entry.creditAccount),
+    }));
     setChartOfAccounts(updatedCOA);
+    setJournalEntries(updatedEntries);
     localStorage.setItem(STORAGE_KEY_COA, JSON.stringify(updatedCOA));
+    localStorage.setItem(STORAGE_KEY_ENTRIES, JSON.stringify(updatedEntries));
 
     if (isSimulationMode) return;
 
@@ -1398,7 +1430,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       const response = await fetch(`${API_BASE_URL}/chart-of-accounts/${code}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(account),
+        body: JSON.stringify({ ...account, code: nextCode }),
       });
       if (!response.ok) {
         const errorData = await response.json().catch(() => null);

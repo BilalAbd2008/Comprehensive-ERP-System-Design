@@ -31,17 +31,16 @@ export default function ProfitLoss() {
       biologicalAssets,
     );
 
-    const totalBebanOperasional =
-      summary.bebanGaji + summary.bebanPakan + summary.bebanPenyusutan;
-
     return {
       pendapatanPenjualan: summary.pendapatanPenjualan,
       hpp: summary.hpp,
       labaKotor: summary.labaKotor,
-      bebanGaji: summary.bebanGaji,
-      bebanPakan: summary.bebanPakan,
-      bebanPenyusutan: summary.bebanPenyusutan,
-      totalBebanOperasional,
+      operatingRevenueRows: summary.operatingRevenueRows,
+      costOfRevenueRows: summary.costOfRevenueRows,
+      operatingExpenseRows: summary.operatingExpenseRows,
+      otherRevenueRows: summary.otherRevenueRows,
+      otherExpenseRows: summary.otherExpenseRows,
+      totalBebanOperasional: summary.jumlahBebanUsaha,
       labaOperasional: summary.labaUsaha,
       keuntunganNilaiWajar: summary.keuntunganNilaiWajar,
       pendapatanLain: summary.pendapatanLain,
@@ -167,24 +166,26 @@ export default function ProfitLoss() {
           <div className="p-8 space-y-6">
             <div>
               <div className="flex justify-between items-center py-2">
-                <span className="text-sm" style={{ color: "#1B4332" }}>
-                  {accountLabel("4-1000", "Pendapatan Penjualan")}
-                </span>
-                <span className="text-sm" style={{ color: "#212529" }}>
-                  {formatCurrency(pl.pendapatanPenjualan)}
-                </span>
+                <span className="text-sm" style={{ color: "#1B4332" }}>Pendapatan Usaha</span>
               </div>
+              {pl.operatingRevenueRows.map((row) => (
+                <div key={row.code} className="flex justify-between items-center py-2 pl-4">
+                  <span className="text-sm" style={{ color: "#495057" }}>{row.code} - {row.name}</span>
+                  <span className="text-sm" style={{ color: "#212529" }}>{formatCurrency(row.amount)}</span>
+                </div>
+              ))}
               <div
                 className="flex justify-between items-center py-2 border-b"
                 style={{ borderColor: "#DEE2E6" }}
               >
-                <span className="text-sm pl-4" style={{ color: "#495057" }}>
-                  {accountLabel("5-3000", "Harga Pokok Penjualan")}
-                </span>
-                <span className="text-sm" style={{ color: "#495057" }}>
-                  ({formatCurrency(pl.hpp)})
-                </span>
+                <span className="text-sm" style={{ color: "#1B4332" }}>Beban Pokok Pendapatan</span>
               </div>
+              {pl.costOfRevenueRows.map((row) => (
+                <div key={row.code} className="flex justify-between items-center py-2 pl-4 border-b" style={{ borderColor: "#DEE2E6" }}>
+                  <span className="text-sm" style={{ color: "#495057" }}>{row.code} - {row.name}</span>
+                  <span className="text-sm" style={{ color: "#495057" }}>({formatCurrency(row.amount)})</span>
+                </div>
+              ))}
               <div
                 className="flex justify-between items-center py-2 border-b-2"
                 style={{ borderColor: "#1B4332" }}
@@ -202,36 +203,12 @@ export default function ProfitLoss() {
               <div className="mb-2" style={{ color: "#495057" }}>
                 <span className="text-sm">Beban Operasional:</span>
               </div>
-              <div className="flex justify-between items-center py-2 pl-4">
-                <span className="text-sm" style={{ color: "#495057" }}>
-                  {accountLabel("5-1000", "Beban Gaji")}
-                </span>
-                <span className="text-sm" style={{ color: "#495057" }}>
-                  ({formatCurrency(pl.bebanGaji)})
-                </span>
-              </div>
-              <div
-                className="flex justify-between items-center py-2 pl-4"
-                style={{ borderColor: "#DEE2E6" }}
-              >
-                <span className="text-sm" style={{ color: "#495057" }}>
-                  {accountLabel("5-2000", "Beban Pakan")}
-                </span>
-                <span className="text-sm" style={{ color: "#495057" }}>
-                  ({formatCurrency(pl.bebanPakan)})
-                </span>
-              </div>
-              <div
-                className="flex justify-between items-center py-2 pl-4 border-b"
-                style={{ borderColor: "#DEE2E6" }}
-              >
-                <span className="text-sm" style={{ color: "#495057" }}>
-                  {accountLabel("5-6000", "Beban Penyusutan")}
-                </span>
-                <span className="text-sm" style={{ color: "#495057" }}>
-                  ({formatCurrency(pl.bebanPenyusutan)})
-                </span>
-              </div>
+              {pl.operatingExpenseRows.map((row) => (
+                <div key={row.code} className="flex justify-between items-center py-2 pl-4 border-b" style={{ borderColor: "#DEE2E6" }}>
+                  <span className="text-sm" style={{ color: "#495057" }}>{row.code} - {row.name}</span>
+                  <span className="text-sm" style={{ color: "#495057" }}>({formatCurrency(row.amount)})</span>
+                </div>
+              ))}
               <div
                 className="flex justify-between items-center py-2 border-b"
                 style={{ borderColor: "#DEE2E6" }}
@@ -262,53 +239,18 @@ export default function ProfitLoss() {
                   Pendapatan & Beban Lain-lain (OIOE):
                 </span>
               </div>
-              <div className="py-2 pl-4">
-                <span className="text-sm" style={{ color: "#495057" }}>
-                  {accountLabel("4-3000", "Pendapatan Lain-lain")}
-                </span>
-              </div>
-              <div className="flex justify-between items-center py-1 pl-8">
-                <span className="text-sm" style={{ color: "#6C757D" }}>
-                  {accountLabel("4-3000", "Pendapatan Lain-lain")}
-                </span>
-                <span className="text-sm" style={{ color: "#495057" }}>
-                  {formatCurrency(pl.pendapatanLain)}
-                </span>
-              </div>
-              <div
-                className="flex justify-between items-center py-1 pl-8 rounded"
-                style={{ backgroundColor: "#FFF3CD" }}
-              >
-                <span className="text-sm" style={{ color: "#856404" }}>
-                  {accountLabel("4-2000", "Keuntungan Nilai Wajar")} (PSAK 241)
-                </span>
-                <span className="text-sm" style={{ color: "#856404" }}>
-                  {formatCurrency(pl.keuntunganNilaiWajar)}
-                </span>
-              </div>
-              <div className="py-2 pl-4">
-                <span className="text-sm" style={{ color: "#495057" }}>
-                  {accountLabel("5-5000", "Beban Lain-lain")}
-                </span>
-              </div>
-              <div className="flex justify-between items-center py-1 pl-8">
-                <span className="text-sm" style={{ color: "#6C757D" }}>
-                  {accountLabel("5-5000", "Beban Lain-lain")}
-                </span>
-                <span className="text-sm" style={{ color: "#495057" }}>
-                  {pl.bebanLain > 0 ? `(${formatCurrency(pl.bebanLain)})` : "-"}
-                </span>
-              </div>
-              {pl.kerugianNilaiWajar > 0 && (
-                <div className="flex justify-between items-center py-1 pl-8">
-                  <span className="text-sm" style={{ color: "#495057" }}>
-                    {accountLabel("5-4000", "Kerugian Nilai Wajar")}
-                  </span>
-                  <span className="text-sm" style={{ color: "#495057" }}>
-                    ({formatCurrency(pl.kerugianNilaiWajar)})
-                  </span>
+              {pl.otherRevenueRows.map((row) => (
+                <div key={row.code} className="flex justify-between items-center py-1 pl-8 rounded" style={row.code === "4-2000" ? { backgroundColor: "#FFF3CD" } : undefined}>
+                  <span className="text-sm" style={{ color: row.code === "4-2000" ? "#856404" : "#6C757D" }}>{row.code} - {row.name}</span>
+                  <span className="text-sm" style={{ color: row.code === "4-2000" ? "#856404" : "#495057" }}>{formatCurrency(row.amount)}</span>
                 </div>
-              )}
+              ))}
+              {pl.otherExpenseRows.map((row) => (
+                <div key={row.code} className="flex justify-between items-center py-1 pl-8">
+                  <span className="text-sm" style={{ color: "#495057" }}>{row.code} - {row.name}</span>
+                  <span className="text-sm" style={{ color: "#495057" }}>{row.amount > 0 ? `(${formatCurrency(row.amount)})` : "-"}</span>
+                </div>
+              ))}
               <div
                 className="flex justify-between items-center py-2 border-b border-t mt-2"
                 style={{ borderColor: "#DEE2E6" }}

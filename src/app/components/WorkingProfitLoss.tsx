@@ -16,16 +16,13 @@ export default function WorkingProfitLoss() {
   };
 
   const {
-    pendapatanPenjualan,
-    keuntunganNilaiWajar,
-    pendapatanLain,
     pendapatanLainDenganNilaiWajar,
-    bebanGaji,
-    bebanPakan,
-    bebanPenyusutan,
-    kerugianNilaiWajar,
-    bebanLain,
     bebanLainDenganNilaiWajar,
+    operatingRevenueRows,
+    costOfRevenueRows,
+    operatingExpenseRows,
+    otherRevenueRows,
+    otherExpenseRows,
     jumlahPendapatanUsaha,
     jumlahBebanPokokPendapatan,
     labaKotor,
@@ -35,6 +32,8 @@ export default function WorkingProfitLoss() {
     labaBersih,
   } = calculateProfitLossSummary(journalEntries, chartOfAccounts, biologicalAssets);
   const { accountLabel } = createBalanceReader(journalEntries, chartOfAccounts);
+  const formatExpense = (value: number) =>
+    value > 0 ? `(${formatCurrency(value)})` : '-';
 
   return (
     <div className="p-8">
@@ -68,12 +67,14 @@ export default function WorkingProfitLoss() {
                   <span className="text-sm" style={{ color: '#495057' }}>Penjualan</span>
                   <span></span>
                 </div>
-                <div className="grid grid-cols-2 pl-4 py-1">
-                  <span className="text-sm" style={{ color: '#6C757D' }}>{accountLabel('4-1000', 'Penjualan Ternak')}</span>
-                  <span className="text-sm text-right" style={{ color: '#212529' }}>
-                    {formatCurrency(pendapatanPenjualan)}
-                  </span>
-                </div>
+                {operatingRevenueRows.map((row) => (
+                  <div key={row.code} className="grid grid-cols-2 pl-4 py-1">
+                    <span className="text-sm" style={{ color: '#6C757D' }}>{row.code} - {row.name}</span>
+                    <span className="text-sm text-right" style={{ color: '#212529' }}>
+                      {formatCurrency(row.amount)}
+                    </span>
+                  </div>
+                ))}
               </div>
 
             </div>
@@ -93,12 +94,14 @@ export default function WorkingProfitLoss() {
             </div>
 
             <div className="space-y-1 pl-6">
-              <div className="grid grid-cols-2 py-1">
-                <span className="text-sm" style={{ color: '#6C757D' }}>{accountLabel('5-3000', 'Harga Pokok Penjualan')}</span>
-                <span className="text-sm text-right" style={{ color: '#212529' }}>
-                  {formatCurrency(jumlahBebanPokokPendapatan)}
-                </span>
-              </div>
+              {costOfRevenueRows.map((row) => (
+                <div key={row.code} className="grid grid-cols-2 py-1">
+                  <span className="text-sm" style={{ color: '#6C757D' }}>{row.code} - {row.name}</span>
+                  <span className="text-sm text-right" style={{ color: '#212529' }}>
+                    {formatCurrency(row.amount)}
+                  </span>
+                </div>
+              ))}
             </div>
 
             <div className="grid grid-cols-2 py-3 px-3 mt-2" style={{ backgroundColor: '#FFB703' }}>
@@ -124,24 +127,14 @@ export default function WorkingProfitLoss() {
             </div>
 
             <div className="space-y-1 pl-6">
-              <div className="grid grid-cols-2 py-1">
-                <span className="text-sm" style={{ color: '#6C757D' }}>{accountLabel('5-1000', 'Beban Gaji')}</span>
-                <span className="text-sm text-right" style={{ color: '#212529' }}>
-                  {formatCurrency(bebanGaji)}
-                </span>
-              </div>
-              <div className="grid grid-cols-2 py-1">
-                <span className="text-sm" style={{ color: '#6C757D' }}>{accountLabel('5-2000', 'Beban Pakan')}</span>
-                <span className="text-sm text-right" style={{ color: '#212529' }}>
-                  {formatCurrency(bebanPakan)}
-                </span>
-              </div>
-              <div className="grid grid-cols-2 py-1">
-                <span className="text-sm" style={{ color: '#6C757D' }}>{accountLabel('5-6000', 'Beban Penyusutan')}</span>
-                <span className="text-sm text-right" style={{ color: '#212529' }}>
-                  {formatCurrency(bebanPenyusutan)}
-                </span>
-              </div>
+              {operatingExpenseRows.map((row) => (
+                <div key={row.code} className="grid grid-cols-2 py-1">
+                  <span className="text-sm" style={{ color: '#6C757D' }}>{row.code} - {row.name}</span>
+                  <span className="text-sm text-right" style={{ color: '#212529' }}>
+                    {formatCurrency(row.amount)}
+                  </span>
+                </div>
+              ))}
             </div>
 
             <div className="grid grid-cols-2 py-3 px-3 mt-2" style={{ backgroundColor: '#FFB703' }}>
@@ -167,40 +160,40 @@ export default function WorkingProfitLoss() {
             </div>
 
             <div className="space-y-1 pl-6">
-              <div className="grid grid-cols-2 py-1">
+              {otherRevenueRows.length > 0 && (
+                <div className="grid grid-cols-2 py-1">
                 <span className="text-sm" style={{ color: '#495057' }}>{accountLabel('4-3000', 'Pendapatan Lain-lain')}</span>
                 <span></span>
-              </div>
-              <div className="grid grid-cols-2 py-1 pl-4">
-                <span className="text-sm" style={{ color: '#6C757D' }}>{accountLabel('4-3000', 'Pendapatan Lain-lain')}</span>
-                <span className="text-sm text-right" style={{ color: '#212529' }}>
-                  {formatCurrency(pendapatanLain)}
-                </span>
-              </div>
-              <div className="grid grid-cols-2 py-1 pl-4 rounded" style={{ backgroundColor: '#FFF3CD' }}>
-                <span className="text-sm" style={{ color: '#856404' }}>{accountLabel('4-2000', 'Keuntungan Perubahan Nilai Wajar')} (PSAK 241)</span>
-                <span className="text-sm text-right" style={{ color: '#856404' }}>
-                  {formatCurrency(keuntunganNilaiWajar)}
-                </span>
-              </div>
-              <div className="grid grid-cols-2 py-1">
-                <span className="text-sm" style={{ color: '#495057' }}>{accountLabel('5-5000', 'Beban Lain-lain')}</span>
-                <span></span>
-              </div>
-              <div className="grid grid-cols-2 py-1 pl-4">
-                <span className="text-sm" style={{ color: '#6C757D' }}>{accountLabel('5-5000', 'Beban Lain-lain')}</span>
-                <span className="text-sm text-right" style={{ color: '#DC3545' }}>
-                  {bebanLain > 0 ? `(${formatCurrency(bebanLain)})` : '-'}
-                </span>
-              </div>
-              {kerugianNilaiWajar > 0 && (
-                <div className="grid grid-cols-2 py-1 pl-4">
-                  <span className="text-sm" style={{ color: '#6C757D' }}>{accountLabel('5-4000', 'Kerugian Nilai Wajar')}</span>
-                  <span className="text-sm text-right" style={{ color: '#DC3545' }}>
-                    ({formatCurrency(kerugianNilaiWajar)})
-                  </span>
                 </div>
               )}
+              {otherRevenueRows.map((row) => (
+                <div
+                  key={row.code}
+                  className="grid grid-cols-2 py-1 pl-4 rounded"
+                  style={row.code === '4-2000' ? { backgroundColor: '#FFF3CD' } : undefined}
+                >
+                  <span className="text-sm" style={{ color: row.code === '4-2000' ? '#856404' : '#6C757D' }}>
+                    {row.code} - {row.name}{row.code === '4-2000' ? ' (PSAK 241)' : ''}
+                  </span>
+                  <span className="text-sm text-right" style={{ color: row.code === '4-2000' ? '#856404' : '#212529' }}>
+                    {formatCurrency(row.amount)}
+                  </span>
+                </div>
+              ))}
+              {otherExpenseRows.length > 0 && (
+                <div className="grid grid-cols-2 py-1">
+                <span className="text-sm" style={{ color: '#495057' }}>{accountLabel('5-5000', 'Beban Lain-lain')}</span>
+                <span></span>
+                </div>
+              )}
+              {otherExpenseRows.map((row) => (
+                <div key={row.code} className="grid grid-cols-2 py-1 pl-4">
+                  <span className="text-sm" style={{ color: '#6C757D' }}>{row.code} - {row.name}</span>
+                  <span className="text-sm text-right" style={{ color: '#DC3545' }}>
+                    {formatExpense(row.amount)}
+                  </span>
+                </div>
+              ))}
               <div className="grid grid-cols-2 py-1 border-t" style={{ borderColor: '#DEE2E6' }}>
                 <span className="text-sm" style={{ color: '#6C757D' }}>Subtotal Pendapatan Lain-lain</span>
                 <span className="text-sm text-right" style={{ color: '#212529' }}>

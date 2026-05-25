@@ -15,9 +15,10 @@ import {
   Trash,
   Settings,
   ChevronDown,
-  Shield,
   Users,
   Workflow,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -34,6 +35,7 @@ export default function Layout() {
   } = useData();
   const [isKertasKerjaOpen, setIsKertasKerjaOpen] = useState(true);
   const [isDataToolsOpen, setIsDataToolsOpen] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -46,16 +48,16 @@ export default function Layout() {
   }
 
   const navigation = [
-    { name: "Dashboard /*  */", href: "/", icon: LayoutDashboard },
+    { name: "Dashboard", href: "/", icon: LayoutDashboard },
     { name: "Aset Biologis", href: "/assets", icon: Sprout },
     { name: "Jurnal Umum / GL", href: "/journal", icon: BookOpen },
     { name: "Buku Besar", href: "/ledger", icon: BookOpen },
   ];
 
   const kertasKerja = [
-    { name: "BS - Aset (BS-A)", href: "/bs-a", icon: FileText },
-    { name: "BS - Liab & Ekuitas (BS-L)", href: "/bs-l", icon: FileText },
-    { name: "P&L", href: "/pl", icon: FileText },
+    { name: "Balance Sheet - Aset", href: "/bs-a", icon: FileText },
+    { name: "Balance Sheet - Liabilitas & Ekuitas", href: "/bs-l", icon: FileText },
+    { name: "Profit & Loss", href: "/pl", icon: FileText },
   ];
 
   const laporanKeuangan = [
@@ -71,13 +73,27 @@ export default function Layout() {
   return (
     <div className="flex h-screen overflow-hidden">
       <aside
-        className="w-64 flex flex-col"
+        className={`${isSidebarCollapsed ? "w-20" : "w-64"} flex flex-col transition-all duration-200`}
         style={{ backgroundColor: "#1B4332", color: "white" }}
       >
-        <div className="p-6 border-b" style={{ borderColor: "#2D6A4F" }}>
-          <h1 className="text-xl">Hers Farm</h1>
-          <p className="text-xs mt-1 opacity-80">ERP Peternakan</p>
-          {currentUser && (
+        <div className={`${isSidebarCollapsed ? "p-3" : "p-6"} border-b`} style={{ borderColor: "#2D6A4F" }}>
+          <div className="flex items-center justify-between gap-2">
+            {!isSidebarCollapsed && (
+              <div>
+                <h1 className="text-xl">Hers Farm</h1>
+                <p className="text-xs mt-1 opacity-80">ERP Peternakan</p>
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+              className="p-2 rounded transition-colors hover:bg-white hover:bg-opacity-10"
+              title={isSidebarCollapsed ? "Lebarkan sidebar" : "Kecilkan sidebar"}
+            >
+              {isSidebarCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+            </button>
+          </div>
+          {currentUser && !isSidebarCollapsed && (
             <div
               className="mt-3 pt-3 border-t"
               style={{ borderColor: "#2D6A4F" }}
@@ -89,7 +105,7 @@ export default function Layout() {
           )}
         </div>
 
-        <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
+        <nav className={`${isSidebarCollapsed ? "p-2" : "p-4"} flex-1 space-y-1 overflow-y-auto`}>
           {navigation.map((item) => {
             const isActive = location.pathname === item.href;
             const Icon = item.icon;
@@ -97,14 +113,15 @@ export default function Layout() {
               <Link
                 key={item.href}
                 to={item.href}
-                className="flex items-center gap-3 px-3 py-2.5 rounded transition-colors text-sm"
+                className={`flex items-center ${isSidebarCollapsed ? "justify-center px-2" : "gap-3 px-3"} py-2.5 rounded transition-colors text-sm`}
                 style={{
                   backgroundColor: isActive ? "#FFB703" : "transparent",
                   color: isActive ? "#212529" : "white",
                 }}
+                title={item.name}
               >
                 <Icon size={18} />
-                {item.name}
+                {!isSidebarCollapsed && item.name}
               </Link>
             );
           })}
@@ -120,9 +137,9 @@ export default function Layout() {
             >
               <div className="flex items-center gap-3">
                 <FolderOpen size={18} />
-                <span>BS &amp; PL</span>
+                {!isSidebarCollapsed && <span>Balance Sheet</span>}
               </div>
-              <span
+              {!isSidebarCollapsed && <span
                 style={{
                   transform: isKertasKerjaOpen
                     ? "rotate(90deg)"
@@ -131,9 +148,9 @@ export default function Layout() {
                 }}
               >
                 ▶
-              </span>
+              </span>}
             </button>
-            {isKertasKerjaOpen && (
+            {isKertasKerjaOpen && !isSidebarCollapsed && (
               <div className="ml-4 mt-1 space-y-1">
                 {kertasKerja.map((item) => {
                   const isActive = location.pathname === item.href;
@@ -165,7 +182,7 @@ export default function Layout() {
               className="px-3 py-2 text-xs opacity-60"
               style={{ color: "white" }}
             >
-              Laporan Keuangan
+              {!isSidebarCollapsed && "Laporan Keuangan"}
             </div>
             {laporanKeuangan.map((item) => {
               const isActive = location.pathname === item.href;
@@ -174,14 +191,15 @@ export default function Layout() {
                 <Link
                   key={item.href}
                   to={item.href}
-                  className="flex items-center gap-3 px-3 py-2.5 rounded transition-colors text-sm"
+                  className={`flex items-center ${isSidebarCollapsed ? "justify-center px-2" : "gap-3 px-3"} py-2.5 rounded transition-colors text-sm`}
                   style={{
                     backgroundColor: isActive ? "#FFB703" : "transparent",
                     color: isActive ? "#212529" : "white",
                   }}
+                  title={item.name}
                 >
                   <Icon size={18} />
-                  {item.name}
+                  {!isSidebarCollapsed && item.name}
                 </Link>
               );
             })}
@@ -195,11 +213,11 @@ export default function Layout() {
               className="px-3 py-2 text-xs opacity-60"
               style={{ color: "white" }}
             >
-              Admin & Manajemen
+              {!isSidebarCollapsed && "Admin & Manajemen"}
             </div>
             <Link
               to="/admin-users"
-              className="flex items-center gap-3 px-3 py-2.5 rounded transition-colors text-sm"
+              className={`flex items-center ${isSidebarCollapsed ? "justify-center px-2" : "gap-3 px-3"} py-2.5 rounded transition-colors text-sm`}
               style={{
                 backgroundColor:
                   location.pathname === "/admin-users"
@@ -208,13 +226,14 @@ export default function Layout() {
                 color:
                   location.pathname === "/admin-users" ? "#212529" : "white",
               }}
+              title="User Admin"
             >
               <Users size={18} />
-              User Admin
+              {!isSidebarCollapsed && "User Admin"}
             </Link>
             <Link
               to="/sop-flowchart"
-              className="flex items-center gap-3 px-3 py-2.5 rounded transition-colors text-sm"
+              className={`flex items-center ${isSidebarCollapsed ? "justify-center px-2" : "gap-3 px-3"} py-2.5 rounded transition-colors text-sm`}
               style={{
                 backgroundColor:
                   location.pathname === "/sop-flowchart"
@@ -223,15 +242,16 @@ export default function Layout() {
                 color:
                   location.pathname === "/sop-flowchart" ? "#212529" : "white",
               }}
+              title="SOP Flowchart"
             >
               <Workflow size={18} />
-              SOP Flowchart
+              {!isSidebarCollapsed && "SOP Flowchart"}
             </Link>
           </div>
         </nav>
 
         <div
-          className="p-4 space-y-2 border-t"
+          className={`${isSidebarCollapsed ? "p-2" : "p-4"} space-y-2 border-t`}
           style={{ borderColor: "#2D6A4F" }}
         >
           <div className="relative">
@@ -243,18 +263,18 @@ export default function Layout() {
             >
               <span className="flex items-center gap-2">
                 <Settings size={16} />
-                Data & Reset
+                {!isSidebarCollapsed && "Data & Reset"}
               </span>
-              <ChevronDown
+              {!isSidebarCollapsed && <ChevronDown
                 size={16}
                 style={{
                   transform: isDataToolsOpen ? "rotate(180deg)" : "rotate(0deg)",
                   transition: "transform 0.2s",
                 }}
-              />
+              />}
             </button>
 
-            {isDataToolsOpen && (
+            {isDataToolsOpen && !isSidebarCollapsed && (
               <div
                 className="absolute bottom-full left-0 right-0 mb-2 rounded-lg border p-2 space-y-2 shadow-xl"
                 style={{ backgroundColor: "#1B4332", borderColor: "#2D6A4F" }}
@@ -303,11 +323,11 @@ export default function Layout() {
               logout();
               navigate("/login");
             }}
-            className="w-full flex items-center gap-2 px-3 py-2 rounded text-sm transition-colors hover:opacity-80"
+            className={`w-full flex items-center ${isSidebarCollapsed ? "justify-center px-2" : "gap-2 px-3"} py-2 rounded text-sm transition-colors hover:opacity-80`}
             style={{ backgroundColor: "#495057" }}
           >
             <LogOut size={16} />
-            Keluar
+            {!isSidebarCollapsed && "Keluar"}
           </button>
         </div>
       </aside>

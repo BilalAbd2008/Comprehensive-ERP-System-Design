@@ -83,12 +83,21 @@ export default function BalanceSheet() {
       (sum, account) => sum + account.amount,
       0,
     );
-    const hutangUsaha = creditBalance("2-1000");
+    const liabilityRows = topAccountsByCategory("liability").map((account) => ({
+      code: account.code,
+      name: account.name,
+      amount: Math.abs(Math.min(balanceIncludingChildren(account.code), 0)),
+    }));
     const equityCapitalAccounts = topAccountsByCategory("equity").filter(
       (account) => account.code !== "3-2000",
     );
+    const equityRows = equityCapitalAccounts.map((account) => ({
+      code: account.code,
+      name: account.name,
+      amount: Math.abs(Math.min(balanceIncludingChildren(account.code), 0)),
+    }));
     const modalDisetor = equityCapitalAccounts.reduce(
-      (sum, account) => sum + creditBalance(account.code),
+      (sum, account) => sum + Math.abs(Math.min(balanceIncludingChildren(account.code), 0)),
       0,
     );
     const labaDitahan = labaTahunBerjalan;
@@ -100,7 +109,7 @@ export default function BalanceSheet() {
     const totalAsetTidakLancar = asetBiologis + asetTetap - akumulasiPenyusutan;
     const totalAset = totalAsetLancar + totalAsetTidakLancar;
 
-    const totalLiabilitas = hutangUsaha;
+    const totalLiabilitas = liabilityRows.reduce((sum, account) => sum + account.amount, 0);
     const totalEkuitas = modalDisetor + labaDitahan;
     const totalLiabilitasDanEkuitas = totalLiabilitas + totalEkuitas;
 
@@ -111,13 +120,13 @@ export default function BalanceSheet() {
       accumulatedDepreciationRows,
       asetTetap,
       akumulasiPenyusutan,
-      hutangUsaha,
+      liabilityRows,
+      equityRows,
       modalDisetor,
       labaDitahan,
       labaTahunBerjalan,
       labels: {
         asetBiologis: accountLabel("1-3000", "Aset Biologis"),
-        hutangUsaha: accountLabel("2-1000", "Hutang Usaha"),
         modalDisetor:
           equityCapitalAccounts.length === 1
             ? equityCapitalAccounts[0].name
@@ -310,8 +319,11 @@ export default function BalanceSheet() {
                     </td>
                     <td></td>
                   </tr>
-                  {bs.currentAssetRows.map((account, index) => (
-                    <tr key={account.code} className="border-b" style={{ borderColor: "#DEE2E6" }}>
+                  {Array.from({ length: Math.max(bs.currentAssetRows.length, bs.liabilityRows.length) }).map((_, index) => {
+                    const account = bs.currentAssetRows[index];
+                    const liability = bs.liabilityRows[index];
+                    return (
+                    <tr key={`current-liability-${index}`} className="border-b" style={{ borderColor: "#DEE2E6" }}>
                       <td
                         className="px-6 py-2 pl-10 text-sm"
                         style={{
@@ -319,7 +331,7 @@ export default function BalanceSheet() {
                           borderRight: "2px solid #DEE2E6",
                         }}
                       >
-                        {account.name}
+                        {account?.name || ""}
                       </td>
                       <td
                         className="px-6 py-2 text-sm text-right"
@@ -328,9 +340,9 @@ export default function BalanceSheet() {
                           borderRight: "2px solid #DEE2E6",
                         }}
                       >
-                        {formatCurrency(account.amount)}
+                        {account ? formatCurrency(account.amount) : ""}
                       </td>
-                      {index === 0 ? (
+                      {liability ? (
                         <>
                           <td
                             className="px-6 py-2 pl-10 text-sm"
@@ -340,36 +352,13 @@ export default function BalanceSheet() {
                               borderRight: "2px solid #DEE2E6",
                             }}
                           >
-                            {bs.labels.hutangUsaha}
+                            {liability.name}
                           </td>
                           <td
                             className="px-6 py-2 text-sm text-right"
                             style={{ color: "#212529" }}
                           >
-                            {formatCurrency(bs.hutangUsaha)}
-                          </td>
-                        </>
-                      ) : index === bs.currentAssetRows.length - 1 ? (
-                        <>
-                          <td
-                            className="px-6 py-3 text-sm"
-                            style={{
-                              color: "#1B4332",
-                              borderLeft: "2px solid #DEE2E6",
-                              borderRight: "2px solid #DEE2E6",
-                              borderTop: "2px solid #DEE2E6",
-                            }}
-                          >
-                            <strong>Total Liabilitas Lancar</strong>
-                          </td>
-                          <td
-                            className="px-6 py-3 text-sm text-right"
-                            style={{
-                              color: "#1B4332",
-                              borderTop: "2px solid #DEE2E6",
-                            }}
-                          >
-                            <strong>{formatCurrency(bs.totalLiabilitas)}</strong>
+                            {formatCurrency(liability.amount)}
                           </td>
                         </>
                       ) : (
@@ -384,7 +373,7 @@ export default function BalanceSheet() {
                         </>
                       )}
                     </tr>
-                  ))}
+                  );})}
                   <tr className="border-b" style={{ borderColor: "#DEE2E6" }}>
                     <td
                       className="px-6 py-3 text-sm"
@@ -404,6 +393,24 @@ export default function BalanceSheet() {
                     >
                       <strong>{formatCurrency(bs.totalAsetLancar)}</strong>
                     </td>
+                    <td
+                      className="px-6 py-3 text-sm"
+                      style={{
+                        color: "#1B4332",
+                        borderLeft: "2px solid #DEE2E6",
+                        borderRight: "2px solid #DEE2E6",
+                      }}
+                    >
+                      <strong>Total Liabilitas Lancar</strong>
+                    </td>
+                    <td className="px-6 py-3 text-sm text-right" style={{ color: "#1B4332" }}>
+                      <strong>{formatCurrency(bs.totalLiabilitas)}</strong>
+                    </td>
+                  </tr>
+
+                  <tr className="border-b" style={{ borderColor: "#DEE2E6" }}>
+                    <td style={{ borderRight: "2px solid #DEE2E6" }}></td>
+                    <td style={{ borderRight: "2px solid #DEE2E6" }}></td>
                     <td
                       className="px-6 py-3 text-sm"
                       style={{

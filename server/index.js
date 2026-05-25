@@ -23,7 +23,7 @@ app.use(
     credentials: true,
   }),
 );
-app.use(express.json({ limit: "2mb" }));
+app.use(express.json({ limit: "25mb" }));
 
 function hashPassword(password) {
   return createHash("sha256").update(password).digest("hex");
@@ -1160,44 +1160,85 @@ app.post("/api/chart-of-accounts", async (req, res, next) => {
 app.put("/api/chart-of-accounts/:code", async (req, res, next) => {
   try {
     const code = String(req.params.code || "");
+    const nextCode = String(req.body?.code || code).trim();
     const name = req.body?.name;
     const parentCode = req.body?.parentCode;
     const category = req.body?.category;
     const isActive = req.body?.isActive;
 
-    const updates = [];
-    const values = [];
-
-    if (name !== undefined) {
-      updates.push("name = ?");
-      values.push(name);
-    }
-    if (parentCode !== undefined) {
-      updates.push("parent_code = ?");
-      values.push(parentCode || null);
-    }
-    if (category !== undefined) {
-      updates.push("category = ?");
-      values.push(category);
-    }
-    if (isActive !== undefined) {
-      updates.push("is_active = ?");
-      values.push(isActive);
+    if (!nextCode) {
+      return res.status(400).json({ message: "Kode akun wajib diisi" });
     }
 
-    if (updates.length === 0) {
-      return res.status(400).json({ message: "Tidak ada field yang diupdate" });
-    }
+    await withTransaction(async (connection) => {
+      if (nextCode !== code) {
+        const [duplicateRows] = await connection.query(
+          "SELECT COUNT(*) AS total FROM chart_of_accounts WHERE code = ?",
+          [nextCode],
+        );
+        if (duplicateRows[0].total > 0) {
+          const duplicateError = new Error("Kode akun sudah digunakan");
+          duplicateError.statusCode = 400;
+          throw duplicateError;
+        }
+      }
 
-    values.push(code);
-    await getPool().query(
-      `UPDATE chart_of_accounts SET ${updates.join(", ")} WHERE code = ?`,
-      values,
-    );
+      const updates = ["code = ?"];
+      const values = [nextCode];
+
+      if (name !== undefined) {
+        updates.push("name = ?");
+        values.push(name);
+      }
+      if (parentCode !== undefined) {
+        updates.push("parent_code = ?");
+        values.push(parentCode || null);
+      }
+      if (category !== undefined) {
+        updates.push("category = ?");
+        values.push(category);
+      }
+      if (isActive !== undefined) {
+        updates.push("is_active = ?");
+        values.push(isActive);
+      }
+
+      values.push(code);
+      await connection.query(
+        `UPDATE chart_of_accounts SET ${updates.join(", ")} WHERE code = ?`,
+        values,
+      );
+
+      if (nextCode !== code) {
+        await connection.query(
+          "UPDATE chart_of_accounts SET parent_code = ? WHERE parent_code = ?",
+          [nextCode, code],
+        );
+        if (name !== undefined) {
+          await connection.query(
+            "UPDATE journal_entries SET debit_account = CONCAT(?, ' ', ?) WHERE debit_account LIKE ?",
+            [nextCode, name, `${code} %`],
+          );
+          await connection.query(
+            "UPDATE journal_entries SET credit_account = CONCAT(?, ' ', ?) WHERE credit_account LIKE ?",
+            [nextCode, name, `${code} %`],
+          );
+        }
+      } else if (name !== undefined) {
+        await connection.query(
+          "UPDATE journal_entries SET debit_account = CONCAT(?, ' ', ?) WHERE debit_account LIKE ?",
+          [nextCode, name, `${code} %`],
+        );
+        await connection.query(
+          "UPDATE journal_entries SET credit_account = CONCAT(?, ' ', ?) WHERE credit_account LIKE ?",
+          [nextCode, name, `${code} %`],
+        );
+      }
+    });
 
     const [updatedRow] = await getPool().query(
       "SELECT code, name, parent_code, category, is_active, created_at, created_by FROM chart_of_accounts WHERE code = ?",
-      [code],
+      [nextCode],
     );
 
     if (!updatedRow.length) {
@@ -1239,7 +1280,7 @@ app.delete("/api/chart-of-accounts/:code", async (req, res, next) => {
 
 app.use((error, _req, res, _next) => {
   console.error(error);
-  res.status(500).json({
+  res.status(error?.statusCode || 500).json({
     message: error?.message || "Terjadi kesalahan pada server",
   });
 });
